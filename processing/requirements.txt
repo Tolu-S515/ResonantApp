@@ -1,0 +1,7 @@
+# Pinned for Intel Macs: PyTorch 2.2.2 is the last release with macOS x86_64 builds
+torch==2.2.2
+torchaudio==2.2.2
+numpy<2
+demucs==4.0.1
+soundfile
+certifi

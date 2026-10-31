@@ -1,0 +1,81 @@
+.app {
+  position: relative;
+  box-sizing: border-box;
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 16px;
+  padding: 24px;
+  text-align: left;
+}
+
+.logo {
+  width: 120px;
+  height: auto;
+}
+
+.app h1 {
+  margin: 0;
+  color: var(--text-h);
+  font-family: var(--heading);
+}
+
+.status {
+  margin: 0;
+  padding: 8px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--code-bg);
+  font-family: var(--mono);
+  font-size: 0.9rem;
+}
+
+/* Centers its content in the whole page, independent of the heading above it */
+.page-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  /* Let clicks pass through the empty overlay to the heading and back link */
+  pointer-events: none;
+}
+
+.page-center > * {
+  pointer-events: auto;
+}
+
+.button {
+  display: inline-block;
+  padding: 10px 28px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  text-decoration: none;
+  border: none;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.button:hover {
+  opacity: 0.85;
+}
+
+.button:focus-visible {
+  outline: 2px solid var(--accent-border);
+  outline-offset: 3px;
+}
+
+.back-link {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.back-link:hover {
+  text-decoration: underline;
+}

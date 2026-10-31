@@ -147,3 +147,20 @@ vite.config.ts.timestamp-*
 
 # Turbo Repo
 .turbo
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Audio files (songs and generated stems stay local)
+processing/separated/
+audiostorage/*
+!audiostorage/.gitkeep
+
+# macOS
+.DS_Store
+
+# Electron build output
+out/
+dist/
