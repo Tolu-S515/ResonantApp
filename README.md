@@ -29,7 +29,8 @@ If `npm run dev` fails with `Electron uninstall`, the Electron binary didn't
 download during install. Run `node node_modules/electron/install.js`.
 
 Other scripts: `npm run build` (compile to `out/`), `npm run preview`
-(run the built app), `npm run lint`.
+(run the built app), `npm run lint`, `npm test` (Vitest; `npm run test:watch`
+to re-run on save). Tests live next to the code they test as `*.test.js`.
 
 ## Audio processing setup
 
@@ -38,6 +39,21 @@ Requires Python 3.10+ and ffmpeg.
 ```bash
 python3 -m venv processing/.venv
 processing/.venv/bin/pip install -r processing/requirements.txt
+```
+
+`processing/process.py` is spawned by the main process after a song is imported.
+It converts the song to `reference.wav`, detects BPM, beats, key and duration,
+then splits it into six stems with Demucs (`stems/`), reporting progress as JSON
+lines on stdout. Run it by hand with (add `--skip-separation` to stop after analysis):
+
+```bash
+processing/.venv/bin/python processing/process.py --input song.mp3 --output-dir some/folder
+```
+
+Python tests (synthesized audio with a known tempo and key):
+
+```bash
+processing/.venv/bin/python -m unittest discover processing
 ```
 
 Test stem separation:

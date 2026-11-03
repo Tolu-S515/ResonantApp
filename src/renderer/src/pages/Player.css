@@ -1,0 +1,266 @@
+.player {
+  box-sizing: border-box;
+  height: 100svh;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 24px;
+}
+
+.player__header {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.player__heading {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.player__artist {
+  font-size: 0.9rem;
+}
+
+.player__title {
+  margin: 0;
+  font-size: 1.5rem;
+  letter-spacing: normal;
+}
+
+.player__info {
+  display: flex;
+  gap: 24px;
+  margin: 0 0 0 auto;
+}
+
+.player__info dt {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.player__info dd {
+  margin: 2px 0 0;
+  color: var(--text-h);
+  font-weight: 600;
+}
+
+.transport {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.transport__play {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+
+.transport__play:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.transport__time {
+  font-family: var(--mono);
+  font-size: 0.9rem;
+}
+
+.player__status-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.player__status {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.transport__metronome {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.transport__toggle {
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.transport__toggle[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.transport__gain {
+  width: 120px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+/* A free-standing stack of tracks; each track is its own row */
+.timeline {
+  --header-width: 160px;
+  --track-gap: 12px;
+  /* Where the lanes start, measured from the left of the timeline */
+  --lane-left: calc(var(--header-width) + var(--track-gap));
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* Full scroll height, so the playhead line runs past every track */
+.timeline__content {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Lines up with the lanes, not the track names. Click or drag to move the playhead. */
+.timeline__ruler {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  flex: none;
+  height: 24px;
+  margin-left: var(--lane-left);
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  touch-action: none;
+}
+
+/* Downward triangle sitting in the ruler */
+.timeline__playhead-handle {
+  position: absolute;
+  bottom: 0;
+  left: calc(var(--playhead) * 100%);
+  width: 12px;
+  height: 10px;
+  transform: translateX(-50%);
+  background: var(--accent);
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
+  pointer-events: none;
+}
+
+/* Vertical line across all lanes */
+.timeline__playhead {
+  position: absolute;
+  top: 24px;
+  bottom: 0;
+  left: calc(var(--lane-left) + (100% - var(--lane-left)) * var(--playhead));
+  width: 2px;
+  transform: translateX(-50%);
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.track {
+  flex: none;
+  display: flex;
+  align-items: stretch;
+  gap: var(--track-gap);
+  height: 88px;
+}
+
+.track__header {
+  flex: none;
+  width: var(--header-width);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+}
+
+.track__name {
+  color: var(--text-h);
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.track__controls {
+  display: flex;
+  gap: 6px;
+}
+
+.track__toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 22px;
+  padding: 0;
+  line-height: 1;
+  /* Trim the line box to the capital letter's height so M/S sit optically centered */
+  text-box: trim-both cap alphabetic;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.track__toggle--mute[aria-pressed='true'] {
+  border-color: #e8a317;
+  background: #e8a317;
+  color: #000;
+}
+
+.track__toggle--solo[aria-pressed='true'] {
+  border-color: #3fb950;
+  background: #3fb950;
+  color: #000;
+}
+
+.track__gain {
+  width: 100%;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.track__lane {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 8px;
+  background: var(--code-bg);
+}
+
+.waveform {
+  display: block;
+  width: 100%;
+  height: 100%;
+  color: var(--accent);
+}
+
+/* Muted, or not soloed while something else is */
+.track__lane--silent .waveform {
+  opacity: 0.3;
+}

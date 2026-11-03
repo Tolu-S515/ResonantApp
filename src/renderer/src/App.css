@@ -11,11 +11,6 @@
   text-align: left;
 }
 
-.logo {
-  width: 120px;
-  height: auto;
-}
-
 .app h1 {
   margin: 0;
   color: var(--text-h);
@@ -66,6 +61,84 @@
   opacity: 0.85;
 }
 
+.button--secondary {
+  padding: 6px 20px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-h);
+}
+
+.button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.convert-nav {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.convert-panel {
+  width: 100%;
+  max-width: 520px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.error {
+  color: #d93025;
+  font-size: 0.85rem;
+}
+
+.analysis {
+  display: flex;
+  gap: 32px;
+  margin: 0;
+}
+
+.analysis dt {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.stage {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.stage__bar {
+  width: 100%;
+  height: 6px;
+  appearance: none;
+  border: none;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.stage__bar::-webkit-progress-bar {
+  background: var(--border);
+}
+
+.stage__bar::-webkit-progress-value {
+  background: var(--accent);
+  transition: width 0.3s;
+}
+
+.analysis dd {
+  margin: 4px 0 0;
+  color: var(--text-h);
+  font-size: 1.4rem;
+  font-weight: 600;
+}
+
 .button:focus-visible {
   outline: 2px solid var(--accent-border);
   outline-offset: 3px;
@@ -78,4 +151,96 @@
 
 .back-link:hover {
   text-decoration: underline;
+}
+
+/* Song details form (Convert page, while processing) */
+.details {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-sizing: border-box;
+}
+
+.details__heading {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.details__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  font-size: 0.85rem;
+}
+
+.details__field legend {
+  margin-bottom: 6px;
+  padding: 0;
+}
+
+.details__field input[type='text'] {
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-h);
+  font: inherit;
+  font-size: 1rem;
+}
+
+.details__field input[type='text']:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+/* Time signature picker: radio buttons styled as one segmented control */
+.segmented {
+  display: inline-flex;
+  align-self: flex-start;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.segmented__option {
+  position: relative;
+  cursor: pointer;
+}
+
+.segmented__option + .segmented__option {
+  border-left: 1px solid var(--border);
+}
+
+.segmented__option input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.segmented__option span {
+  display: block;
+  padding: 7px 18px;
+  color: var(--text-h);
+  font-family: var(--mono);
+  font-size: 0.95rem;
+}
+
+.segmented__option input:checked + span {
+  background: var(--accent);
+  color: #fff;
+}
+
+.segmented__option input:focus-visible + span {
+  outline: 2px solid var(--accent-border);
+  outline-offset: -2px;
 }

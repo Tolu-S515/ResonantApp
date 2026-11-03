@@ -1,12 +1,6 @@
 import { useRef, useState } from 'react'
+import { AUDIO_EXTENSIONS, isAudioFile } from '../../../shared/audio.js'
 import './FileDropzone.css'
-
-const AUDIO_EXTENSIONS = ['wav', 'mp3', 'mp4', 'm4a', 'aac', 'flac', 'ogg']
-
-function isAudioFile(name) {
-  const ext = name.split('.').pop().toLowerCase()
-  return AUDIO_EXTENSIONS.includes(ext)
-}
 
 function FileDropzone({ file, onFileSelected }) {
   const inputRef = useRef(null)
