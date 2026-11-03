@@ -1,14 +1,18 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router'
+import { renderClickTrack } from '../audio/click.js'
 import { createEngine } from '../audio/engine.js'
-import { effectiveGains } from '../audio/mixer.js'
-import { ACTIVE_STATUSES, STAGE_LABELS, formatTime } from '../format.js'
+import { METERS, barStarts, beatGrid, clickEvents } from '../audio/grid.js'
+import { effectiveGains, muteToggled, showsMuted, soloToggled } from '../audio/mixer.js'
+import { ACTIVE_STATUSES, STAGE_LABELS, formatGain, formatTime } from '../format.js'
+import { GridLines, RulerBars } from '../components/BeatGrid.jsx'
 import CancelButton from '../components/CancelButton.jsx'
 import Waveform from '../components/Waveform.jsx'
 import './Player.css'
 
 // Track order in the DAW view, top to bottom.
-// The metronome isn't a track: it's generated live and controlled from the transport.
+// The metronome isn't a track: its click track is rendered from the beat grid and
+// controlled from the transport, outside mute/solo.
 const TRACKS = [
   { id: 'reference', name: 'Reference' },
   { id: 'drums', name: 'Drums' },
@@ -181,8 +185,51 @@ function Player() {
     setMixer((prev) => ({ ...prev, [id]: { ...prev[id], ...changes } }))
   }
 
-  // Metronome click: separate from the tracks, so soloing a track never silences it
-  const [metronome, setMetronome] = useState({ enabled: true, gain: 1 })
+  // Metronome click: separate from the tracks, so soloing a track never silences it.
+  // barShift moves where bars start (for songs whose first detected beat isn't beat 1).
+  const [metronome, setMetronome] = useState({ enabled: true, gain: 1, subdivision: 'off', barShift: 0 })
+  const timeSignature = session?.timeSignature ?? '4/4'
+  const { beatsPerBar } = METERS[timeSignature] ?? METERS['4/4']
+
+  // Beat grid from the analysis. Session updates arrive as new objects, but a
+  // session's beats never change once set, so key on the session and beat count.
+  const beats = session?.analysis?.beats
+  const beatsKey = beats ? `${sessionId}:${beats.length}` : null
+  const grid = useMemo(
+    () => (beats && duration > 0 ? beatGrid(beats, duration) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- see beatsKey
+    [beatsKey, duration],
+  )
+  const bars = useMemo(
+    () => (grid ? barStarts(grid.beats, { timeSignature, barShift: metronome.barShift }) : []),
+    [grid, timeSignature, metronome.barShift],
+  )
+
+  // Render the click track whenever the grid or click settings change, and swap it in
+  useEffect(() => {
+    const engine = engineRef.current
+    if (!engine || !grid) return
+    let cancelled = false
+    const events = clickEvents(grid.beats, {
+      timeSignature,
+      subdivision: metronome.subdivision,
+      barShift: metronome.barShift,
+    })
+    renderClickTrack(events, duration).then(
+      (buffer) => !cancelled && engine.setBuffer('metronome', buffer),
+      (err) => !cancelled && setError(err.message),
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [grid, duration, timeSignature, metronome.subdivision, metronome.barShift])
+
+  useEffect(() => {
+    engineRef.current?.setGain('metronome', metronome.enabled ? metronome.gain : 0)
+  }, [metronome.enabled, metronome.gain, audioState])
+
+  const shiftBar = (delta) =>
+    setMetronome((m) => ({ ...m, barShift: (((m.barShift + delta) % beatsPerBar) + beatsPerBar) % beatsPerBar }))
 
   // Playhead as a fraction of the song (0 = start, 1 = end)
   const playhead = duration > 0 ? position / duration : 0
@@ -264,17 +311,48 @@ function Player() {
           >
             Metronome
           </button>
-          <input
-            type="range"
-            className="transport__gain"
-            min="0"
-            max="1.5"
-            step="0.01"
-            value={metronome.gain}
-            aria-label="Metronome volume"
-            onChange={(e) => setMetronome((m) => ({ ...m, gain: Number(e.target.value) }))}
-            onDoubleClick={() => setMetronome((m) => ({ ...m, gain: 1 }))}
-          />
+          <div className="gain">
+            <input
+              type="range"
+              className="transport__gain"
+              min="0"
+              max="2.5"
+              step="0.01"
+              value={metronome.gain}
+              aria-label="Metronome volume"
+              aria-valuetext={formatGain(metronome.gain)}
+              onChange={(e) => setMetronome((m) => ({ ...m, gain: Number(e.target.value) }))}
+              onDoubleClick={() => setMetronome((m) => ({ ...m, gain: 1 }))}
+            />
+            <output className="gain__value">{formatGain(metronome.gain)}</output>
+          </div>
+          <div className="segmented segmented--small" role="radiogroup" aria-label="Click subdivision">
+            {[
+              ['off', 'Beats'],
+              ['eighth', '8ths'],
+              ['sixteenth', '16ths'],
+            ].map(([value, label]) => (
+              <label key={value} className="segmented__option">
+                <input
+                  type="radio"
+                  name="subdivision"
+                  value={value}
+                  checked={metronome.subdivision === value}
+                  onChange={() => setMetronome((m) => ({ ...m, subdivision: value }))}
+                />
+                <span>{label}</span>
+              </label>
+            ))}
+          </div>
+          <div className="bar-shift" title="Move where bars start (the accent click, bar lines and numbers) if bar 1 isn't on the first beat">
+            <span>Bar start</span>
+            <button type="button" className="track__toggle" aria-label="Bar start one beat earlier" onClick={() => shiftBar(-1)}>
+              ‹
+            </button>
+            <button type="button" className="track__toggle" aria-label="Bar start one beat later" onClick={() => shiftBar(1)}>
+              ›
+            </button>
+          </div>
         </div>
       </div>
 
@@ -304,6 +382,7 @@ function Player() {
             onPointerDown={handleRulerPointerDown}
             onPointerMove={handleRulerPointerMove}
           >
+            {grid && <RulerBars bars={bars} duration={duration} />}
             <div className="timeline__playhead-handle" />
           </div>
           {TRACKS.map((track) => (
@@ -314,9 +393,9 @@ function Player() {
                   <button
                     type="button"
                     className="track__toggle track__toggle--mute"
-                    aria-pressed={mixer[track.id].muted}
+                    aria-pressed={showsMuted(mixer[track.id])}
                     aria-label={`Mute ${track.name}`}
-                    onClick={() => updateTrack(track.id, { muted: !mixer[track.id].muted })}
+                    onClick={() => updateTrack(track.id, muteToggled(mixer[track.id]))}
                   >
                     M
                   </button>
@@ -325,28 +404,37 @@ function Player() {
                     className="track__toggle track__toggle--solo"
                     aria-pressed={mixer[track.id].soloed}
                     aria-label={`Solo ${track.name}`}
-                    onClick={() => updateTrack(track.id, { soloed: !mixer[track.id].soloed })}
+                    onClick={() => updateTrack(track.id, soloToggled(mixer[track.id]))}
                   >
                     S
                   </button>
                 </div>
-                <input
-                  type="range"
-                  className="track__gain"
-                  min="0"
-                  max="1.5"
-                  step="0.01"
-                  value={mixer[track.id].gain}
-                  aria-label={`${track.name} gain`}
-                  onChange={(e) => updateTrack(track.id, { gain: Number(e.target.value) })}
-                  onDoubleClick={() => updateTrack(track.id, { gain: 1 })}
-                />
+                <div className="gain">
+                  <input
+                    type="range"
+                    className="track__gain"
+                    min="0"
+                    max="1.5"
+                    step="0.01"
+                    value={mixer[track.id].gain}
+                    aria-label={`${track.name} gain`}
+                    aria-valuetext={formatGain(mixer[track.id].gain)}
+                    onChange={(e) => updateTrack(track.id, { gain: Number(e.target.value) })}
+                    onDoubleClick={() => updateTrack(track.id, { gain: 1 })}
+                  />
+                  <output className="gain__value">{formatGain(mixer[track.id].gain)}</output>
+                </div>
               </div>
               <div className={`track__lane${gains[track.id] === 0 ? ' track__lane--silent' : ''}`}>
                 {peaksFor(track.id) && <Waveform peaks={peaksFor(track.id)} />}
               </div>
             </div>
           ))}
+          {grid && (
+            <div className="timeline__grid">
+              <GridLines beats={grid.beats} bars={bars} duration={duration} />
+            </div>
+          )}
           <div className="timeline__playhead" />
         </div>
       </section>

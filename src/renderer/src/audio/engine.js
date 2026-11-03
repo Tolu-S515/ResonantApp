@@ -13,7 +13,18 @@ const GAIN_SMOOTHING = 0.01
 export function createEngine() {
   const ctx = new AudioContext({ latencyHint: 'interactive' })
   const master = ctx.createGain()
-  master.connect(ctx.destination)
+
+  // Safety limiter: stems plus a loud click can exceed full scale, and the
+  // output hard-clips (audible crackle). This only acts on peaks above -1 dBFS.
+  // Its small look-ahead delays every track equally, so sync is unaffected.
+  const limiter = ctx.createDynamicsCompressor()
+  limiter.threshold.value = -1
+  limiter.knee.value = 0
+  limiter.ratio.value = 20
+  limiter.attack.value = 0.001
+  limiter.release.value = 0.1
+  master.connect(limiter)
+  limiter.connect(ctx.destination)
 
   const tracks = new Map() // id → { buffer, gain, source }
   const loads = new Map() // id → load promise, so each track is fetched once
@@ -117,6 +128,23 @@ export function createEngine() {
       if (playing) {
         stopSources()
         startSources(offset)
+      }
+    },
+
+    // Puts an already-built buffer on a track (the click track), replacing any
+    // previous one. Mid-playback, the new buffer takes over at the current position.
+    // Doesn't change the song's duration.
+    setBuffer(id, buffer) {
+      const t = track(id)
+      if (t.source) {
+        t.source.stop()
+        t.source.disconnect()
+        t.source = null
+      }
+      t.buffer = buffer
+      if (playing) {
+        const when = ctx.currentTime + START_DELAY
+        startSource(t, when, when - startedAt)
       }
     },
 

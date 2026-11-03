@@ -167,6 +167,43 @@
   pointer-events: none;
 }
 
+/* Beat and bar lines over the lanes (below the ruler, above the waveforms) */
+.timeline__grid {
+  position: absolute;
+  top: 24px;
+  bottom: 0;
+  left: var(--lane-left);
+  right: 0;
+  pointer-events: none;
+}
+
+.beat-grid,
+.ruler-bars {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  color: var(--text-h);
+  pointer-events: none;
+}
+
+.bar-shift {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.8rem;
+}
+
+.bar-shift span {
+  margin-right: 4px;
+}
+
+.segmented--small .segmented__option span {
+  padding: 4px 10px;
+  font-family: inherit;
+  font-size: 0.8rem;
+}
+
 /* Vertical line across all lanes */
 .timeline__playhead {
   position: absolute;
@@ -184,7 +221,7 @@
   display: flex;
   align-items: stretch;
   gap: var(--track-gap);
-  height: 88px;
+  height: 100px; /* name, M/S, slider and its readout */
 }
 
 .track__header {
@@ -243,6 +280,21 @@
   width: 100%;
   margin: 0;
   accent-color: var(--accent);
+}
+
+/* Slider with its dB readout underneath, left-aligned */
+.gain {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.gain__value {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
 }
 
 .track__lane {
