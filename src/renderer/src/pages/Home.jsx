@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 import logo from '../assets/resonant-logo.svg'
+import SettingsMenu from '../components/SettingsMenu.jsx'
 import { ACTIVE_STATUSES, STAGE_LABELS, formatTime } from '../format.js'
 import './Home.css'
 
@@ -71,7 +72,8 @@ function Home() {
       <header className="home__header">
         <img src={logo} className="home__logo" alt="" />
         <h1>Resonant</h1>
-        <Link to="/convert" className="button home__new">
+        <SettingsMenu className="home__settings" />
+        <Link to="/convert" className="button">
           + New session
         </Link>
       </header>

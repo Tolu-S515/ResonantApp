@@ -387,6 +387,13 @@ void Engine::takePeaks(int index, float& left, float& right) {
   right = tracks_[index].peakRight.exchange(0);
 }
 
+std::vector<float> Engine::takeInputPeaks() {
+  const int count = std::min(info_.inputChannels, kMaxInputMeters);
+  std::vector<float> peaks(count);
+  for (int c = 0; c < count; c++) peaks[c] = inputPeaks_[c].exchange(0);
+  return peaks;
+}
+
 void Engine::startLatencyTest(int outputChannel, int inputChannel) {
   if (!running()) throw std::runtime_error("Audio is not running");
   if (outputChannel < 0 || outputChannel >= info_.outputChannels) throw std::runtime_error("No such output channel");
@@ -511,6 +518,8 @@ OSStatus Engine::renderOutput(AudioUnitRenderActionFlags* flags, const AudioTime
   if (latencyState_.load(std::memory_order_relaxed) == static_cast<int>(LatencyState::Running)) {
     runLatencyTest(*inputs, frames, output);  // no monitoring while testing
   } else {
+    const int meters = std::min(static_cast<int>(inputs->size()), kMaxInputMeters);
+    for (int c = 0; c < meters; c++) raisePeak(inputPeaks_[c], peakOf((*inputs)[c].data(), frames));
     mix(*inputs, frames, output);
   }
   frameCounter_ += frames;

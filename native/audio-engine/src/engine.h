@@ -44,6 +44,8 @@ std::vector<DeviceInfo> listDevices();
 
 // Instrument tracks: each takes one input channel (mono) or two (stereo pair)
 constexpr int kMaxTracks = 8;
+// Inputs that get their own meter (for the audio settings page)
+constexpr int kMaxInputMeters = 16;
 
 struct Track {
   std::atomic<bool> active{false};
@@ -115,6 +117,8 @@ class Engine {
   void clearTrack(int index);
   // Input peaks since the last call, then resets them
   void takePeaks(int index, float& left, float& right);
+  // Peak of each input channel since the last call (up to kMaxInputMeters), then resets them
+  std::vector<float> takeInputPeaks();
 
   // Monitoring is muted while the test runs, so a loopback cable can't feed back.
   // In split mode the result includes the ring buffer, like monitoring does.
@@ -138,6 +142,7 @@ class Engine {
   AudioUnit inputUnit_ = nullptr;   // split mode only
   EngineInfo info_;
   Track tracks_[kMaxTracks];
+  std::atomic<float> inputPeaks_[kMaxInputMeters];
 
   // Where the device's input lands, one buffer per channel. Written on the
   // input callback's thread (the output callback's, with one device).

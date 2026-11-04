@@ -1,16 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router'
+import { BACKING_MAX_DB, BACKING_MIN_DB, backingGain, loadBackingDb, saveBackingDb } from '../audio/backing.js'
 import { renderClickTrack } from '../audio/click.js'
 import { createEngine } from '../audio/engine.js'
 import { METERS, barStarts, beatGrid, clickEvents } from '../audio/grid.js'
 import { effectiveGains, muteToggled, showsMuted, soloToggled } from '../audio/mixer.js'
+import { MAX_TRACKS } from '../../../shared/audio-settings.js'
+import { findOutputDevice } from '../audio/output.js'
+import { freeInput, inputOptions, trackPeaks } from '../audio/instruments.js'
+import { useAudioMeters, useAudioState } from '../audio/useAudioState.js'
+import { useInstruments } from '../audio/useInstruments.js'
 import { ACTIVE_STATUSES, STAGE_LABELS, formatGain, formatTime } from '../format.js'
 import { GridLines, RulerBars } from '../components/BeatGrid.jsx'
 import CancelButton from '../components/CancelButton.jsx'
+import InstrumentTrack from '../components/InstrumentTrack.jsx'
+import SettingsMenu from '../components/SettingsMenu.jsx'
 import Waveform from '../components/Waveform.jsx'
 import './Player.css'
 
-// Track order in the DAW view, top to bottom.
+// Backing-track order in the DAW view, top to bottom. Instrument tracks (live
+// input through the native engine) follow them.
 // The metronome isn't a track: its click track is rendered from the beat grid and
 // controlled from the transport, outside mute/solo.
 const TRACKS = [
@@ -21,7 +30,6 @@ const TRACKS = [
   { id: 'piano', name: 'Piano' },
   { id: 'vocals', name: 'Vocals' },
   { id: 'other', name: 'Other' },
-  { id: 'my_instrument', name: 'My instrument' },
 ]
 
 // Reference (the full mix) starts muted so you hear the stems; everything else plays
@@ -114,6 +122,27 @@ function Player() {
     }
   }, [sessionId, audioKey, stemFiles])
 
+  // Backing tracks play out of the chosen audio interface, the same one the
+  // instrument is monitored on, so both run off one clock. Falls back to the
+  // system output when it isn't connected. Rechecked when devices change.
+  const nativeAudio = useAudioState()
+  const interfaceName = nativeAudio?.settings.name ?? null
+  useEffect(() => {
+    const engine = engineRef.current
+    if (!engine) return
+    let cancelled = false
+    const route = () =>
+      findOutputDevice(interfaceName)
+        .then((deviceId) => !cancelled && engine.setOutputDevice(deviceId ?? ''))
+        .catch((err) => !cancelled && setError(`Could not switch audio output: ${err.message}`))
+    route()
+    navigator.mediaDevices.addEventListener('devicechange', route)
+    return () => {
+      cancelled = true
+      navigator.mediaDevices.removeEventListener('devicechange', route)
+    }
+  }, [audioKey, interfaceName])
+
   // Waveform peaks, fetched once each as processing makes them available.
   // Keyed by URL, so another session's peaks never show up here.
   const peakFiles = session?.files?.peaks
@@ -184,6 +213,14 @@ function Player() {
   function updateTrack(id, changes) {
     setMixer((prev) => ({ ...prev, [id]: { ...prev[id], ...changes } }))
   }
+
+  // Backing level: the whole song and click together, so the live instrument
+  // (mixed in by macOS alongside it) can sit on top. Remembered between sessions.
+  const [backingDb, setBackingDb] = useState(loadBackingDb)
+  useEffect(() => {
+    engineRef.current?.setBackingLevel(backingGain(backingDb))
+    saveBackingDb(backingDb)
+  }, [backingDb, audioState])
 
   // Metronome click: separate from the tracks, so soloing a track never silences it.
   const [metronome, setMetronome] = useState({ enabled: true, gain: 1, subdivision: 'off' })
@@ -259,6 +296,20 @@ function Player() {
     if (event.currentTarget.hasPointerCapture(event.pointerId)) seekFromPointer(event)
   }
 
+  // Instrument tracks: live input through the native engine
+  const {
+    instruments,
+    update: updateInstrument,
+    setInputs: setInstrumentInputs,
+    add: addInstrument,
+    remove: removeInstrument,
+  } = useInstruments()
+  const meters = useAudioMeters()
+  const engineInfo = nativeAudio?.info ?? null
+  // Unknown while unplugged: offer at least what the tracks already use
+  const channelCount =
+    engineInfo?.inputChannels ?? Math.max(2, ...(instruments ?? []).flatMap((t) => t.inputs.map((c) => c + 1)))
+
   const gains = effectiveGains(mixer)
   const analysis = session?.analysis
   const title = session ? (session.songName ?? session.source.fileName) : 'No session loaded'
@@ -292,6 +343,7 @@ function Player() {
             <dd>{analysis ? formatTime(analysis.durationSec) : '—'}</dd>
           </div>
         </dl>
+        <SettingsMenu />
       </header>
 
       <div className="transport">
@@ -309,6 +361,24 @@ function Player() {
         <span className="transport__time">
           {formatTime(position)} / {formatTime(duration)}
         </span>
+        <div className="transport__backing" title="Turns the whole song and click down together, to leave room for your instrument. Double-click for 0 dB.">
+          <span className="transport__label">Backing</span>
+          <div className="gain">
+            <input
+              type="range"
+              className="transport__gain"
+              min={BACKING_MIN_DB}
+              max={BACKING_MAX_DB}
+              step="0.5"
+              value={backingDb}
+              aria-label="Backing level"
+              aria-valuetext={formatGain(backingGain(backingDb))}
+              onChange={(e) => setBackingDb(Number(e.target.value))}
+              onDoubleClick={() => setBackingDb(0)}
+            />
+            <output className="gain__value">{formatGain(backingGain(backingDb))}</output>
+          </div>
+        </div>
         <div className="transport__metronome">
           <button
             type="button"
@@ -437,6 +507,35 @@ function Player() {
               </div>
             </div>
           ))}
+          {instruments?.map((track, index) => (
+            <InstrumentTrack
+              key={index}
+              name={`My Instrument ${index + 1}`}
+              track={track}
+              options={inputOptions(instruments, index, channelCount)}
+              peaks={trackPeaks(meters.tracks, index)}
+              connected={Boolean(engineInfo)}
+              problem={nativeAudio?.error ?? null}
+              onChange={(changes) => updateInstrument(index, changes)}
+              onInputChange={(value) => setInstrumentInputs(index, value)}
+              onRemove={index > 0 ? () => removeInstrument(index) : undefined}
+            />
+          ))}
+          {instruments && (
+            <button
+              type="button"
+              className="timeline__add-track"
+              onClick={() => addInstrument(channelCount)}
+              disabled={instruments.length >= MAX_TRACKS || freeInput(instruments, channelCount) === -1}
+              title={
+                freeInput(instruments, channelCount) === -1
+                  ? 'Every input already has a track. Switch a track to a single input to add another.'
+                  : undefined
+              }
+            >
+              + Add instrument
+            </button>
+          )}
           {grid && (
             <div className="timeline__grid">
               <GridLines beats={grid.beats} bars={bars} duration={duration} />

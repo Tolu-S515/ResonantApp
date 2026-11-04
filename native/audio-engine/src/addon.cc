@@ -148,6 +148,15 @@ Napi::Value TakePeaks(const Napi::CallbackInfo& info) {
   return result;
 }
 
+// takeInputPeaks() → [peak per input channel] since the last call
+Napi::Value TakeInputPeaks(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  auto peaks = engine(env).takeInputPeaks();
+  Napi::Array result = Napi::Array::New(env, peaks.size());
+  for (size_t i = 0; i < peaks.size(); i++) result.Set(i, peaks[i]);
+  return result;
+}
+
 // startLatencyTest({ outputChannel = 0, inputChannel = 0 })
 Napi::Value StartLatencyTest(const Napi::CallbackInfo& info) {
   return guarded(info, [&]() -> Napi::Value {
@@ -180,6 +189,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("setTrack", Napi::Function::New(env, SetTrack));
   exports.Set("clearTrack", Napi::Function::New(env, ClearTrack));
   exports.Set("takePeaks", Napi::Function::New(env, TakePeaks));
+  exports.Set("takeInputPeaks", Napi::Function::New(env, TakeInputPeaks));
   exports.Set("startLatencyTest", Napi::Function::New(env, StartLatencyTest));
   exports.Set("latencyResult", Napi::Function::New(env, LatencyResult));
   return exports;

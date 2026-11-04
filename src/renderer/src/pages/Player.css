@@ -90,11 +90,24 @@
   font-size: 0.85rem;
 }
 
-.transport__metronome {
+.transport__backing {
   display: flex;
   align-items: center;
   gap: 10px;
   margin-left: auto;
+}
+
+.transport__label {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.transport__metronome {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-left: 16px;
+  border-left: 1px solid var(--border);
 }
 
 .transport__toggle {
@@ -315,4 +328,96 @@
 /* Muted, or not soloed while something else is */
 .track__lane--silent .waveform {
   opacity: 0.3;
+}
+
+/* Instrument tracks (live input) */
+.track--instrument {
+  position: relative; /* for the remove button */
+  height: 118px; /* adds the input meter */
+}
+
+/* Removes an added track: top-right corner of its lane */
+.track__remove {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--text);
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.track__remove:hover {
+  background: var(--code-bg);
+  color: var(--text-h);
+  opacity: 1;
+}
+
+.track__toggle--monitor[aria-pressed='true'] {
+  border-color: #58a6ff;
+  background: #58a6ff;
+  color: #000;
+}
+
+.track__input {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 0.72rem;
+}
+
+.track__input-dropdown {
+  flex: 1;
+}
+
+.track__lane--instrument {
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  border: 1px dashed var(--border);
+  background: transparent;
+}
+
+.track__lane--live {
+  border-style: solid;
+  border-color: #58a6ff;
+}
+
+.track__lane-message {
+  font-size: 0.85rem;
+}
+
+.timeline__add-track {
+  flex: none;
+  align-self: flex-start;
+  width: var(--header-width);
+  padding: 6px 0;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.timeline__add-track:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.timeline__add-track:hover:not(:disabled) {
+  color: var(--text-h);
+  border-color: var(--text);
 }

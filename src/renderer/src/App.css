@@ -68,6 +68,13 @@
   color: var(--text-h);
 }
 
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 7px;
+}
+
 .button:disabled {
   opacity: 0.6;
   cursor: default;

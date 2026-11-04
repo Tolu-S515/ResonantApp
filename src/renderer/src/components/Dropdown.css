@@ -1,0 +1,91 @@
+.dropdown {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+  height: 22px;
+  padding: 0 7px 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-h);
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+
+.dropdown:hover,
+.dropdown--open {
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+}
+
+.dropdown:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.dropdown__value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dropdown__chevron {
+  flex: none;
+  color: var(--text);
+  transition: transform 0.15s;
+}
+
+.dropdown--open .dropdown__chevron {
+  transform: rotate(180deg);
+}
+
+/* Fixed, so a scrolling track list can't clip it */
+.dropdown__menu {
+  position: fixed;
+  z-index: 50;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  box-shadow: var(--shadow);
+}
+
+.dropdown__option {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px 5px 6px;
+  border-radius: 5px;
+  color: var(--text-h);
+  font-size: 0.8rem;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.dropdown__option--active {
+  background: var(--accent-bg);
+}
+
+.dropdown__option[aria-selected='true'] {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.dropdown__option[aria-disabled='true'] {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.dropdown__check {
+  width: 14px;
+  text-align: center;
+}

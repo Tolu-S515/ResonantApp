@@ -1,0 +1,252 @@
+.audio-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  text-align: left;
+}
+
+.audio-settings__title {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.audio-settings__section {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+  padding: 14px;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.audio-settings__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.audio-settings__label {
+  color: var(--text-h);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.audio-settings__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.audio-settings__hint {
+  font-size: 0.8rem;
+}
+
+.audio-settings__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.audio-settings__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.audio-settings__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--border);
+}
+
+.audio-settings__status--on {
+  color: #3fb950;
+}
+
+.audio-settings__status--on .audio-settings__dot {
+  background: #3fb950;
+}
+
+.audio-settings__info,
+.audio-settings .error {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.audio-settings__meters {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.audio-settings__meters li {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.85rem;
+}
+
+.audio-settings__row--spread {
+  justify-content: space-between;
+}
+
+.audio-settings__rescan {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.audio-settings__rescan:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.audio-settings__interfaces {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.audio-settings__interface {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+
+.audio-settings__interface:hover:not(:disabled):not(.audio-settings__interface--selected) {
+  background: var(--code-bg);
+}
+
+.audio-settings__interface:disabled {
+  cursor: default;
+}
+
+.audio-settings__interface--selected {
+  border-color: var(--accent);
+  background: var(--accent-bg, var(--code-bg));
+  cursor: default;
+}
+
+.audio-settings__interface--missing {
+  cursor: default;
+  opacity: 0.6;
+  border-style: dashed;
+}
+
+.audio-settings__radio {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  box-sizing: border-box;
+  border: 2px solid var(--border);
+  border-radius: 50%;
+}
+
+.audio-settings__interface--selected .audio-settings__radio {
+  border: 4px solid var(--accent);
+}
+
+.audio-settings__interface-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.audio-settings__interface-name {
+  overflow: hidden;
+  color: var(--text-h);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audio-settings__interface-meta {
+  font-size: 0.8rem;
+}
+
+.audio-settings__empty {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.audio-settings__buffers {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+}
+
+.audio-settings__buffer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+
+.audio-settings__buffer:hover:not(:disabled):not(.audio-settings__buffer--selected) {
+  background: var(--code-bg);
+}
+
+.audio-settings__buffer:disabled {
+  cursor: default;
+}
+
+.audio-settings__buffer--selected {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+  cursor: default;
+}
+
+.audio-settings__buffer-frames {
+  color: var(--text-h);
+  font-weight: 600;
+}
+
+.audio-settings__buffer--selected .audio-settings__buffer-frames {
+  color: var(--accent);
+}
+
+.audio-settings__buffer-ms {
+  font-size: 0.72rem;
+  white-space: nowrap;
+}

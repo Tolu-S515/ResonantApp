@@ -163,6 +163,19 @@ export function createEngine({ clickTrackId = 'metronome' } = {}) {
       track(id).gain.gain.setTargetAtTime(value, ctx.currentTime, GAIN_SMOOTHING)
     },
 
+    // Level of everything this engine plays (song tracks and click), before the
+    // limiter. Turning it down leaves room for the live instrument on top.
+    setBackingLevel(value) {
+      master.gain.setTargetAtTime(value, ctx.currentTime, GAIN_SMOOTHING)
+    },
+
+    // Plays through this output device ('' = the system default). Ids come from
+    // navigator.mediaDevices.enumerateDevices(); see output.js. Safe mid-playback.
+    setOutputDevice(deviceId) {
+      if (ctx.sinkId === deviceId) return Promise.resolve()
+      return ctx.setSinkId(deviceId)
+    },
+
     close() {
       stopSources()
       playing = false
