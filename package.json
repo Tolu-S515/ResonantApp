@@ -11,7 +11,8 @@
     "preview": "electron-vite preview",
     "lint": "oxlint",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "build:native": "node-gyp rebuild --directory native/audio-engine"
   },
   "dependencies": {
     "react": "^19.3.1",
@@ -24,6 +25,8 @@
     "@vitejs/plugin-react": "^6.1.2",
     "electron": "^45.2.0",
     "electron-vite": "^6.0.0",
+    "node-addon-api": "^8.9.2",
+    "node-gyp": "^12.4.0",
     "oxlint": "^1.90.0",
     "vite": "^8.3.5",
     "vitest": "^5.1.0"

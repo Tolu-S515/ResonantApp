@@ -1,6 +1,7 @@
 // Multitrack playback on a single AudioContext clock.
 //
-// Each track is a decoded AudioBuffer → its own GainNode → master → speakers.
+// Each track is a decoded AudioBuffer → its own GainNode → music bus → master → speakers.
+// The click track skips the music bus (see MUSIC_BUS_DB).
 // On play, every track gets a fresh AudioBufferSourceNode and all of them are
 // started at the same context time, so they stay sample-aligned.
 // (Source nodes are one-shot: pause stops them, play/seek makes new ones.)
@@ -10,7 +11,13 @@ const START_DELAY = 0.03
 // Time constant for gain changes; short enough to feel instant, long enough not to click
 const GAIN_SMOOTHING = 0.01
 
-export function createEngine() {
+// The song is mastered to 0 dBFS, which leaves no room above it for the click.
+// Turning all song tracks down by this much gives the click real headroom: boosting
+// it then makes it louder instead of just pushing it into the limiter.
+export const MUSIC_BUS_DB = -6
+
+// clickTrackId: the track that bypasses the music bus (the metronome)
+export function createEngine({ clickTrackId = 'metronome' } = {}) {
   const ctx = new AudioContext({ latencyHint: 'interactive' })
   const master = ctx.createGain()
 
@@ -24,6 +31,10 @@ export function createEngine() {
   limiter.attack.value = 0.001
   limiter.release.value = 0.1
   master.connect(limiter)
+
+  const musicBus = ctx.createGain()
+  musicBus.gain.value = 10 ** (MUSIC_BUS_DB / 20)
+  musicBus.connect(master)
   limiter.connect(ctx.destination)
 
   const tracks = new Map() // id → { buffer, gain, source }
@@ -37,7 +48,7 @@ export function createEngine() {
     let t = tracks.get(id)
     if (!t) {
       const gain = ctx.createGain()
-      gain.connect(master)
+      gain.connect(id === clickTrackId ? master : musicBus)
       t = { buffer: null, gain, source: null }
       tracks.set(id, t)
     }

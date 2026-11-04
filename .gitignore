@@ -164,3 +164,6 @@ audiostorage/*
 # Electron build output
 out/
 dist/
+
+# Native engine build output (npm run build:native)
+native/audio-engine/build/

@@ -19,6 +19,11 @@ describe('sanitizeDetails', () => {
     expect(sanitizeDetails({ timeSignature: '3/4' })).toEqual({ timeSignature: '3/4' })
   })
 
+  it('keeps a bar shift', () => {
+    expect(sanitizeDetails({ barShift: 0 })).toEqual({ barShift: 0 })
+    expect(sanitizeDetails({ barShift: 3 })).toEqual({ barShift: 3 })
+  })
+
   it('drops unknown fields, so the UI cannot change anything else', () => {
     expect(sanitizeDetails({ songName: 'A', status: 'ready', files: {} })).toEqual({ songName: 'A' })
   })
@@ -32,6 +37,10 @@ describe('sanitizeDetails', () => {
     ['null', null],
     ['a number name', { songName: 5 }],
     ['an unsupported time signature', { timeSignature: '5/4' }],
+    ['a negative bar shift', { barShift: -1 }],
+    ['a bar shift past the longest bar', { barShift: 4 }],
+    ['a fractional bar shift', { barShift: 1.5 }],
+    ['a string bar shift', { barShift: '1' }],
   ])('rejects %s', (_label, input) => {
     expect(() => sanitizeDetails(input)).toThrow()
   })

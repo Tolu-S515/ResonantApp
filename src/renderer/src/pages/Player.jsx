@@ -186,10 +186,12 @@ function Player() {
   }
 
   // Metronome click: separate from the tracks, so soloing a track never silences it.
-  // barShift moves where bars start (for songs whose first detected beat isn't beat 1).
-  const [metronome, setMetronome] = useState({ enabled: true, gain: 1, subdivision: 'off', barShift: 0 })
+  const [metronome, setMetronome] = useState({ enabled: true, gain: 1, subdivision: 'off' })
   const timeSignature = session?.timeSignature ?? '4/4'
   const { beatsPerBar } = METERS[timeSignature] ?? METERS['4/4']
+  // Moves where bars start, for songs whose first grid beat isn't beat 1. Saved
+  // with the session. Wrapped to the bar length in case the time signature changed.
+  const barShift = (session?.barShift ?? 0) % beatsPerBar
 
   // Beat grid from the analysis. Session updates arrive as new objects, but a
   // session's beats never change once set, so key on the session and beat count.
@@ -201,8 +203,8 @@ function Player() {
     [beatsKey, duration],
   )
   const bars = useMemo(
-    () => (grid ? barStarts(grid.beats, { timeSignature, barShift: metronome.barShift }) : []),
-    [grid, timeSignature, metronome.barShift],
+    () => (grid ? barStarts(grid.beats, { timeSignature, barShift }) : []),
+    [grid, timeSignature, barShift],
   )
 
   // Render the click track whenever the grid or click settings change, and swap it in
@@ -213,7 +215,7 @@ function Player() {
     const events = clickEvents(grid.beats, {
       timeSignature,
       subdivision: metronome.subdivision,
-      barShift: metronome.barShift,
+      barShift,
     })
     renderClickTrack(events, duration).then(
       (buffer) => !cancelled && engine.setBuffer('metronome', buffer),
@@ -222,14 +224,19 @@ function Player() {
     return () => {
       cancelled = true
     }
-  }, [grid, duration, timeSignature, metronome.subdivision, metronome.barShift])
+  }, [grid, duration, timeSignature, metronome.subdivision, barShift])
 
   useEffect(() => {
     engineRef.current?.setGain('metronome', metronome.enabled ? metronome.gain : 0)
   }, [metronome.enabled, metronome.gain, audioState])
 
-  const shiftBar = (delta) =>
-    setMetronome((m) => ({ ...m, barShift: (((m.barShift + delta) % beatsPerBar) + beatsPerBar) % beatsPerBar }))
+  // Updates the page straight away, then saves; the saved session comes back
+  // through onSessionUpdated.
+  const shiftBar = (delta) => {
+    const next = (((barShift + delta) % beatsPerBar) + beatsPerBar) % beatsPerBar
+    setSession((s) => ({ ...s, barShift: next }))
+    window.resonant.updateSessionDetails(sessionId, { barShift: next }).catch((err) => setError(err.message))
+  }
 
   // Playhead as a fraction of the song (0 = start, 1 = end)
   const playhead = duration > 0 ? position / duration : 0
@@ -316,7 +323,7 @@ function Player() {
               type="range"
               className="transport__gain"
               min="0"
-              max="2.5"
+              max="2"
               step="0.01"
               value={metronome.gain}
               aria-label="Metronome volume"

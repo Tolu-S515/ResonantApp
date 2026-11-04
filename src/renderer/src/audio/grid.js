@@ -155,34 +155,35 @@ export function isBarStart(index, beatsPerBar, barShift = 0) {
 
 // Which sound file plays for each kind of click
 export const CLICK_SOUNDS = {
-  accent: 'quarter', // first beat of each bar
-  beat: 'eighth', // the other beats
-  eighth: 'quarter', // half-way through a beat (8ths and 16ths modes)
-  sixteenth: 'sixteenth', // quarter-way points (16ths mode)
+  accent: 'quarter',
+  normal: 'eighth',
 }
 
 // Every click to play: { time, sound }, sound being a file from CLICK_SOUNDS.
-// Subdivisions split each beat evenly, so they follow
-// the beats' real timing. barShift moves bar starts later by that many beats.
+//
+// Subdivisions split each beat evenly, so they follow the beats' real timing.
+// Accents are counted in clicks, starting on the first beat of a bar:
+// - Beats: one every beatsPerBar clicks (Accent-2-3-4 in 4/4), i.e. each bar.
+// - 8ths: one every bar's worth of eighths (Accent-2-3-4-5-6-7-8 in 4/4).
+// - 16ths: one every beatsPerBar clicks (each beat in 4/4).
+// All other clicks use the normal sound. barShift moves bar starts later by that many beats.
 export function clickEvents(beats, { timeSignature = '4/4', subdivision = 'off', barShift = 0 } = {}) {
   const meter = METERS[timeSignature] ?? METERS['4/4']
   const perBeat = meter.perBeat[subdivision] ?? 1
-  // Half-way through a beat is an eighth; quarter-way points are sixteenths.
-  // In 6/8 every eighth sits on an even step when counting in sixteenths.
-  const stepsPerEighth = perBeat / meter.perBeat.eighth
+  const accentEvery = subdivision === 'eighth' ? meter.beatsPerBar * perBeat : meter.beatsPerBar
+  const sound = (clickNumber) => CLICK_SOUNDS[isBarStart(clickNumber, accentEvery) ? 'accent' : 'normal']
 
   const events = []
   beats.forEach((time, i) => {
-    const role = isBarStart(i, meter.beatsPerBar, barShift) ? 'accent' : 'beat'
-    events.push({ time, sound: CLICK_SOUNDS[role] })
+    // Click count from the first bar start, so accents line up with bar starts
+    const first = (i - barShift) * perBeat
+    events.push({ time, sound: sound(first) })
     if (perBeat === 1) return
     // The last beat has no next beat; reuse the previous gap
     const next = beats[i + 1] ?? (i > 0 ? time + (time - beats[i - 1]) : null)
     if (next === null) return
     const step = (next - time) / perBeat
-    for (let k = 1; k < perBeat; k++) {
-      events.push({ time: time + k * step, sound: CLICK_SOUNDS[k % stepsPerEighth === 0 ? 'eighth' : 'sixteenth'] })
-    }
+    for (let k = 1; k < perBeat; k++) events.push({ time: time + k * step, sound: sound(first + k) })
   })
   return events
 }

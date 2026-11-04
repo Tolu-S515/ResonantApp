@@ -13,6 +13,11 @@ import sixteenthUrl from '../assets/clicks/sixteenth.wav'
 const SOUND_URLS = { quarter: quarterUrl, eighth: eighthUrl, sixteenth: sixteenthUrl }
 const SAMPLE_RATE = 44100
 
+// The click sounds peak at -1 dBFS. Rendering them 6 dB down (-7 dBFS) keeps the
+// click where it was relative to the song (which plays 6 dB down on the music bus)
+// and leaves 6 dB of real boost on the metronome slider before -1 dBFS.
+export const CLICK_LEVEL_DB = -6
+
 // Decoded once and reused, as raw samples at SAMPLE_RATE
 let soundsPromise = null
 
@@ -55,6 +60,9 @@ export async function renderClickTrack(events, duration) {
   const sounds = await loadSounds()
   const length = Math.max(1, Math.ceil(duration * SAMPLE_RATE))
   const buffer = new AudioBuffer({ length, sampleRate: SAMPLE_RATE, numberOfChannels: 1 })
-  buffer.copyToChannel(mixClicks(events, sounds, SAMPLE_RATE, length), 0)
+  const samples = mixClicks(events, sounds, SAMPLE_RATE, length)
+  const level = 10 ** (CLICK_LEVEL_DB / 20)
+  for (let i = 0; i < samples.length; i++) samples[i] *= level
+  buffer.copyToChannel(samples, 0)
   return buffer
 }

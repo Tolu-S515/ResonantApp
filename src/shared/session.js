@@ -1,11 +1,13 @@
-// Session fields the user edits (song details form). Shared so the UI and the
+// Session fields the user edits (song details form, player bar start). Shared so the UI and the
 // main-process validation agree on the rules.
 
 export const TIME_SIGNATURES = ['4/4', '3/4', '6/8']
 export const MAX_DETAIL_LENGTH = 200
+// Bar start shift, in beats. Up to one beat short of the longest bar (4/4).
+export const MAX_BAR_SHIFT = 3
 
 // Returns only the recognised, valid fields from untrusted input:
-// trimmed strings (empty → null) and a known time signature. Throws on anything else.
+// trimmed strings (empty → null), a known time signature and a bar shift. Throws on anything else.
 export function sanitizeDetails(input) {
   if (typeof input !== 'object' || input === null) throw new Error('Invalid details')
   const details = {}
@@ -19,6 +21,11 @@ export function sanitizeDetails(input) {
   if ('timeSignature' in input) {
     if (!TIME_SIGNATURES.includes(input.timeSignature)) throw new Error('Invalid time signature')
     details.timeSignature = input.timeSignature
+  }
+  if ('barShift' in input) {
+    const { barShift } = input
+    if (!Number.isInteger(barShift) || barShift < 0 || barShift > MAX_BAR_SHIFT) throw new Error('Invalid bar shift')
+    details.barShift = barShift
   }
   return details
 }

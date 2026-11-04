@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { barStarts, beatGrid, clickEvents, fitSteadyTempo, isBarStart, isSteady, thinningStep } from './grid.js'
+import { CLICK_SOUNDS, barStarts, beatGrid, clickEvents, fitSteadyTempo, isBarStart, isSteady, thinningStep } from './grid.js'
 
 // Deterministic "random" jitter so tests are repeatable
 function jitter(i, amount) {
@@ -114,72 +114,50 @@ describe('isBarStart', () => {
 })
 
 describe('clickEvents', () => {
-  const beats = [0, 1, 2, 3, 4]
-  const sounds = (events) => events.map((e) => e.sound)
+  const beats = [0, 1, 2, 3, 4, 5, 6, 7]
+  // A = accent sound, . = normal sound
+  const pattern = (events) => events.map((e) => (e.sound === CLICK_SOUNDS.accent ? 'A' : '.')).join('')
 
-  it('accents the first beat of each bar with the quarter sound in 4/4', () => {
-    expect(sounds(clickEvents(beats))).toEqual(['quarter', 'eighth', 'eighth', 'eighth', 'quarter'])
+  it('accents the first beat of each bar in 4/4', () => {
+    expect(pattern(clickEvents(beats))).toBe('A...A...')
   })
 
   it('uses 3 beats per bar in 3/4', () => {
-    expect(sounds(clickEvents(beats, { timeSignature: '3/4' }))).toEqual([
-      'quarter',
-      'eighth',
-      'eighth',
-      'quarter',
-      'eighth',
-    ])
+    expect(pattern(clickEvents(beats, { timeSignature: '3/4' }))).toBe('A..A..A.')
   })
 
   it('moves the accent with barShift', () => {
-    expect(sounds(clickEvents(beats, { barShift: 2 }))).toEqual(['eighth', 'eighth', 'quarter', 'eighth', 'eighth'])
+    expect(pattern(clickEvents(beats, { barShift: 2 }))).toBe('..A...A.')
   })
 
-  it('adds eighths half-way between beats', () => {
-    const events = clickEvents([0, 1, 2], { subdivision: 'eighth' })
-    expect(events.map((e) => [e.time, e.sound])).toEqual([
-      [0, 'quarter'],
-      [0.5, 'quarter'],
-      [1, 'eighth'],
-      [1.5, 'quarter'],
-      [2, 'eighth'],
-      [2.5, 'quarter'], // last beat reuses the previous gap
-    ])
+  it('in 8ths, accents once every 8 clicks (Accent-2-3-4-5-6-7-8)', () => {
+    const events = clickEvents([0, 1, 2, 3, 4], { subdivision: 'eighth' })
+    expect(pattern(events)).toBe('A.......A.')
+    // Accents land on the first beat of each bar
+    expect(events.filter((e) => e.sound === CLICK_SOUNDS.accent).map((e) => e.time)).toEqual([0, 4])
   })
 
-  it('mixes eighth and sixteenth sounds for sixteenths', () => {
-    const events = clickEvents([0, 1], { subdivision: 'sixteenth' })
-    expect(events.slice(0, 4).map((e) => [e.time, e.sound])).toEqual([
-      [0, 'quarter'],
-      [0.25, 'sixteenth'],
-      [0.5, 'quarter'],
-      [0.75, 'sixteenth'],
-    ])
+  it('in 8ths, keeps accents in line with a shifted bar start', () => {
+    expect(pattern(clickEvents([0, 1, 2, 3, 4], { subdivision: 'eighth', barShift: 1 }))).toBe('..A.......')
   })
 
-  it('splits 6/8 beats into three eighths, two beats per bar', () => {
-    const events = clickEvents([0, 1.5, 3], { timeSignature: '6/8', subdivision: 'eighth' })
-    expect(events.map((e) => [e.time, e.sound])).toEqual([
-      [0, 'quarter'],
-      [0.5, 'quarter'],
-      [1, 'quarter'],
-      [1.5, 'eighth'],
-      [2, 'quarter'],
-      [2.5, 'quarter'],
-      [3, 'quarter'],
-      [3.5, 'quarter'],
-      [4, 'quarter'],
-    ])
+  it('in 8ths, accents once per bar in 3/4 and 6/8', () => {
+    expect(pattern(clickEvents([0, 1, 2, 3], { timeSignature: '3/4', subdivision: 'eighth' }))).toBe('A.....A.')
+    expect(pattern(clickEvents([0, 1, 2], { timeSignature: '6/8', subdivision: 'eighth' }))).toBe('A.....A..')
   })
 
-  it('places 6/8 sixteenths between the eighths', () => {
-    const events = clickEvents([0, 3], { timeSignature: '6/8', subdivision: 'sixteenth' })
-    expect(sounds(events.slice(0, 6))).toEqual(['quarter', 'sixteenth', 'quarter', 'sixteenth', 'quarter', 'sixteenth'])
+  it('in 16ths, accents every 4 clicks (each beat)', () => {
+    expect(pattern(clickEvents([0, 1, 2], { subdivision: 'sixteenth' }))).toBe('A...A...A...')
   })
 
-  it('follows uneven beats', () => {
+  it('places eighths half-way between beats, following uneven beats', () => {
     const events = clickEvents([0, 1, 3], { subdivision: 'eighth' })
-    expect(events.map((e) => e.time)).toEqual([0, 0.5, 1, 2, 3, 4])
+    expect(events.map((e) => e.time)).toEqual([0, 0.5, 1, 2, 3, 4]) // last beat reuses the previous gap
+  })
+
+  it('splits 6/8 beats into three eighths', () => {
+    const events = clickEvents([0, 1.5, 3], { timeSignature: '6/8', subdivision: 'eighth' })
+    expect(events.map((e) => e.time)).toEqual([0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4])
   })
 })
 
