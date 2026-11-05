@@ -6,9 +6,9 @@ const SAVE_DELAY_MS = 400
 const saved = ({ inputs, gain, pan }) => ({ inputs, gain, pan })
 const ignore = () => {} // the engine reports its own problems through audio state
 
-// The instrument tracks for the player: [{ inputs, gain, pan, monitor }], or null
-// while loading. Track i is engine track i. Monitoring starts off, and every track
-// stops monitoring when the player closes. Inputs/gain/pan are saved app-wide.
+// The instrument tracks for the player: [{ inputs, gain, pan, monitor, armed }], or
+// null while loading. Track i is engine track i. Monitoring and record arm start off,
+// and every track stops monitoring when the player closes. Inputs/gain/pan are saved app-wide.
 export function useInstruments() {
   const [instruments, setInstruments] = useState(null)
   const sentRef = useRef([]) // what the engine was last told, per index
@@ -16,8 +16,8 @@ export function useInstruments() {
   useEffect(() => {
     let cancelled = false
     window.resonant.audio.getInstruments().then(
-      (list) => !cancelled && setInstruments(list.map((t) => ({ ...t, monitor: false }))),
-      () => !cancelled && setInstruments([{ inputs: [0], gain: 1, pan: 0, monitor: false }]),
+      (list) => !cancelled && setInstruments(list.map((t) => ({ ...t, monitor: false, armed: false }))),
+      () => !cancelled && setInstruments([{ inputs: [0], gain: 1, pan: 0, monitor: false, armed: false }]),
     )
     return () => {
       cancelled = true
@@ -74,7 +74,7 @@ export function useInstruments() {
   const add = useCallback((channelCount) => {
     setInstruments((list) => {
       const track = list.length < MAX_TRACKS && newInstrument(list, channelCount)
-      return track ? [...list, { ...track, monitor: false }] : list
+      return track ? [...list, { ...track, monitor: false, armed: false }] : list
     })
   }, [])
 

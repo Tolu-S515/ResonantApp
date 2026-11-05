@@ -49,8 +49,9 @@
 
 .transport {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 16px;
+  gap: 12px 16px;
   padding: 8px 12px;
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -67,6 +68,78 @@
   background: var(--accent);
   color: #fff;
   cursor: pointer;
+}
+
+.transport__buttons {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.transport__step {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--border); /* matches the record button */
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-h);
+  cursor: pointer;
+}
+
+.transport__step:hover:not(:disabled) {
+  background: var(--code-bg);
+}
+
+.transport__step:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.transport__record {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+
+.transport__record .record-dot {
+  width: 14px;
+  height: 14px;
+  background: #f85149;
+}
+
+/* Recording: filled red, with a pulsing white dot */
+.transport__record[aria-pressed='true'] {
+  border-color: #f85149;
+  background: #f85149;
+}
+
+.transport__record[aria-pressed='true'] .record-dot {
+  background: #fff;
+  animation: record-pulse 1s ease-in-out infinite;
+}
+
+@keyframes record-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.transport__record:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .transport__play:disabled {
@@ -90,11 +163,112 @@
   font-size: 0.85rem;
 }
 
+.transport__practice {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-left: auto;
+  padding-right: 16px;
+  border-right: 1px solid var(--border);
+}
+
+/* The key you'd get, next to the − / + buttons */
+.transport__key-name {
+  min-width: 64px;
+  color: var(--text-h);
+  font-size: 0.85rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.transport__render {
+  padding: 4px 12px;
+  border: none;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.transport__render:hover {
+  opacity: 0.85;
+}
+
+.transport__rendering {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.transport__spinner {
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.transport__field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.transport__dropdown {
+  width: 72px;
+  height: 26px;
+  font-size: 0.85rem;
+}
+
+/* − value + ; the value resets to 0 */
+.stepper {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.stepper__value {
+  min-width: 30px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-h);
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  cursor: pointer;
+}
+
+.stepper__value:disabled {
+  cursor: default;
+}
+
+/* The analysed value, under a changed key or tempo */
+.player__original {
+  display: block;
+  margin-top: 1px;
+  font-size: 0.7rem;
+  font-weight: 400;
+  color: var(--text);
+}
+
 .transport__backing {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-left: auto;
 }
 
 .transport__label {
@@ -102,12 +276,14 @@
   font-weight: 600;
 }
 
+/* Its own row under the playback controls */
 .transport__metronome {
   display: flex;
+  flex-basis: 100%;
   align-items: center;
   gap: 10px;
-  padding-left: 16px;
-  border-left: 1px solid var(--border);
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
 }
 
 .transport__toggle {
@@ -136,7 +312,7 @@
 
 /* A free-standing stack of tracks; each track is its own row */
 .timeline {
-  --header-width: 160px;
+  --header-width: 184px; /* fits an instrument's name with its record and remove buttons */
   --track-gap: 12px;
   /* Where the lanes start, measured from the left of the timeline */
   --lane-left: calc(var(--header-width) + var(--track-gap));
@@ -336,30 +512,68 @@
   height: 118px; /* adds the input meter */
 }
 
-/* Removes an added track: top-right corner of its lane */
-.track__remove {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  z-index: 1;
+/* Name on the left; record-enable and remove buttons in the top-right corner */
+.track__title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.track__actions {
+  display: flex;
+  gap: 4px;
+}
+
+.track__square {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  box-sizing: border-box;
+  width: 22px;
+  height: 22px;
   padding: 0;
-  border: none;
+  border: 1px solid var(--border);
   border-radius: 4px;
-  background: none;
+  background: transparent;
   color: var(--text);
   cursor: pointer;
-  opacity: 0.7;
+  transition:
+    border-color 0.15s,
+    color 0.15s;
 }
 
+/* Red on hover, since it deletes */
 .track__remove:hover {
-  background: var(--code-bg);
-  color: var(--text-h);
-  opacity: 1;
+  border-color: #f85149;
+  color: #f85149;
+}
+
+/* Record dot: grey when off, red when on */
+.record-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #8b8d98;
+  transition: background 0.15s;
+}
+
+.track__arm[aria-pressed='true'] {
+  border-color: #f85149;
+}
+
+.track__arm[aria-pressed='true'] .record-dot {
+  background: #f85149;
+}
+
+.track__lane--armed {
+  border-color: rgba(248, 81, 73, 0.5);
+}
+
+.track__lane--recording {
+  border-style: solid;
+  border-color: #f85149;
+  background: rgba(248, 81, 73, 0.06);
 }
 
 .track__toggle--monitor[aria-pressed='true'] {

@@ -1,10 +1,10 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import './Dropdown.css'
 
-// Compact styled dropdown. options: [{ value, label, disabled }].
+// Compact styled dropdown. options: [{ value, label, disabled }]. disabled greys out the whole control.
 // Opens below the button (above it near the bottom of the window). Arrow keys move,
 // Enter/Space picks, Escape closes; clicking outside or scrolling closes too.
-export default function Dropdown({ value, options, onChange, label, className = '' }) {
+export default function Dropdown({ value, options, onChange, label, className = '', disabled = false }) {
   const [open, setOpen] = useState(false)
   const [active, setActive] = useState(-1)
   const [position, setPosition] = useState(null)
@@ -88,6 +88,7 @@ export default function Dropdown({ value, options, onChange, label, className = 
         aria-expanded={open}
         aria-controls={open ? listId : undefined}
         aria-label={label}
+        disabled={disabled}
         onClick={() => (open ? close() : openMenu())}
         onKeyDown={handleKeyDown}
       >

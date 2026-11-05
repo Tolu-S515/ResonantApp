@@ -5,8 +5,9 @@ import { join } from 'node:path'
 import { createAudioController, createAudioHost } from './audio.js'
 import { CancelledError, createJobQueue, runProcessing } from './processing.js'
 import { handleSessionProtocol, registerSchemePrivileges } from './protocol.js'
+import { RenderCancelledError, createRenderer } from './renders.js'
 import { DEFAULT_INSTRUMENTS, sanitizeDeviceSettings, sanitizeInstruments, sanitizeTrack } from '../shared/audio-settings.js'
-import { sanitizeDetails } from '../shared/session.js'
+import { MAX_TRANSPOSE, sanitizeDetails } from '../shared/session.js'
 import { readSettings, updateSettings } from './settings.js'
 import { createSession, isSessionId, listSessions, readSession, sessionPath, updateSession } from './sessions.js'
 
@@ -50,6 +51,12 @@ const audio = createAudioController({
     throw new Error('Resonant needs microphone access to hear your interface. Allow it in System Settings → Privacy & Security → Microphone.')
   },
   send: sendToWindows,
+})
+
+// Key changes (Rubber Band renders of the stems)
+const renderer = createRenderer({
+  sessionsDir,
+  onProgress: (sessionId, progress) => sendToWindows('render:progress', { sessionId, ...progress }),
 })
 
 const enqueue = createJobQueue()
@@ -168,6 +175,26 @@ ipcMain.handle('session:get', async (_event, id) => {
   return readSession(sessionsDir(), id)
 })
 
+// Resolves with { trackId: file path in the session } in this key, rendering first if
+// needed. (Speed is applied live in the player, so renders are always at 100%.) A newer
+// request for the session cancels this one: it then resolves with { cancelled: true }
+// (a rejection would log an error in the page).
+ipcMain.handle('render:prepare', async (_event, id, transpose) => {
+  if (!isSessionId(id)) throw new Error('Invalid session id')
+  if (!Number.isInteger(transpose) || Math.abs(transpose) > MAX_TRANSPOSE) throw new Error('Invalid key change')
+  const session = await readSession(sessionsDir(), id)
+  if (!session.files.reference) throw new Error("The song hasn't finished importing yet")
+  if (!['ready', 'cancelled', 'failed'].includes(session.status)) {
+    throw new Error('Key changes are available once stem splitting finishes')
+  }
+  try {
+    return { files: await renderer.prepare(id, session.files, 1, transpose) }
+  } catch (err) {
+    if (err instanceof RenderCancelledError) return { cancelled: true }
+    throw err
+  }
+})
+
 // Audio interface and instrument monitoring (native engine)
 ipcMain.handle('audio:list-interfaces', () => audio.listInterfaces())
 ipcMain.handle('audio:get-state', () => audio.state())
@@ -203,7 +230,10 @@ app.whenReady().then(() => {
 })
 
 // Stop the engine (and release the interface) when the app quits
-app.on('will-quit', () => audioHost.kill())
+app.on('will-quit', () => {
+  audioHost.kill()
+  renderer.cancelAll()
+})
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()

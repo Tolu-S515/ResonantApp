@@ -108,6 +108,8 @@ export async function createSession(sessionsDir, sourcePath) {
       timeSignature: '4/4',
       // Which grid beat is beat 1 of a bar (set in the player)
       barShift: 0,
+      speed: 1,
+      transpose: 0,
       analysis: null,
     }
     await writeJsonAtomic(join(sessionDir, 'session.json'), session)

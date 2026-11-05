@@ -18,7 +18,12 @@
     background 0.15s;
 }
 
-.dropdown:hover,
+.dropdown:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.dropdown:hover:not(:disabled),
 .dropdown--open {
   border-color: var(--accent-border);
   background: var(--accent-bg);

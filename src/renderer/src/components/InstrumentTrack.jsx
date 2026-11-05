@@ -4,32 +4,60 @@ import { describeInputs, optionValue } from '../audio/instruments.js'
 import Dropdown from './Dropdown.jsx'
 import Meter from './Meter.jsx'
 
-// One "My Instrument" row: monitor toggle, which inputs it plays, its level and
-// a live input meter. The lane says what it's doing (recordings will go there).
+// One "My Instrument" row: record arm, monitor toggle, which inputs it plays, its
+// level and a live input meter. The lane says what it's doing (recordings will go there).
 //
 // options: from inputOptions(); onInputChange(value) when one is picked.
 // peaks: [left, right] input peaks. connected: the engine is running.
-// problem: why it isn't, if it should be.
-export default function InstrumentTrack({ name, track, options, peaks, connected, problem, onChange, onInputChange, onRemove }) {
+// problem: why it isn't, if it should be. recording: the transport is recording.
+export default function InstrumentTrack({
+  name,
+  track,
+  options,
+  peaks,
+  connected,
+  problem,
+  recording,
+  onChange,
+  onInputChange,
+  onRemove,
+}) {
   const stereo = track.inputs.length === 2
   const level = stereo ? Math.max(peaks[0], peaks[1]) : peaks[0]
 
+  const capturing = recording && track.armed && connected
   let laneMessage
   if (!connected) laneMessage = problem ?? 'Choose your audio interface in Audio settings (the gear, top right) to hear yourself.'
+  else if (capturing) laneMessage = `Recording ${describeInputs(track.inputs).toLowerCase()}`
+  else if (track.armed) laneMessage = `${describeInputs(track.inputs)}. Ready to record: press the record button by Play.`
   else if (track.monitor) laneMessage = `Monitoring ${describeInputs(track.inputs).toLowerCase()}`
   else laneMessage = `${describeInputs(track.inputs)}. Turn on monitoring (headphones button) to hear yourself.`
 
   return (
     <div className="track track--instrument" role="group" aria-label={name}>
-      {onRemove && (
-        <button type="button" className="track__remove" aria-label={`Remove ${name}`} title="Remove track" onClick={onRemove}>
-          <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true">
-            <path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-          </svg>
-        </button>
-      )}
       <div className="track__header">
-        <span className="track__name">{name}</span>
+        <div className="track__title">
+          <span className="track__name">{name}</span>
+          <div className="track__actions">
+            <button
+              type="button"
+              className="track__square track__arm"
+              aria-pressed={Boolean(track.armed)}
+              aria-label={`Record-enable ${name}`}
+              title={track.armed ? 'Disable recording on this track' : 'Enable recording on this track'}
+              onClick={() => onChange({ armed: !track.armed })}
+            >
+              <span className="record-dot" aria-hidden="true" />
+            </button>
+            {onRemove && (
+              <button type="button" className="track__square track__remove" aria-label={`Remove ${name}`} title="Remove track" onClick={onRemove}>
+                <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true">
+                  <path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                </svg>
+              </button>
+            )}
+          </div>
+        </div>
         <div className="track__controls">
           <button
             type="button"
@@ -83,7 +111,11 @@ export default function InstrumentTrack({ name, track, options, peaks, connected
         </div>
         <Meter peak={connected ? level : 0} label={`${name} input level`} />
       </div>
-      <div className={`track__lane track__lane--instrument${track.monitor && connected ? ' track__lane--live' : ''}`}>
+      <div
+        className={`track__lane track__lane--instrument${
+          capturing ? ' track__lane--recording' : track.armed ? ' track__lane--armed' : track.monitor && connected ? ' track__lane--live' : ''
+        }`}
+      >
         <span className="track__lane-message">{laneMessage}</span>
       </div>
     </div>

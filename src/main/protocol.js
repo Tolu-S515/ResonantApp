@@ -6,9 +6,10 @@ import { isSessionId } from './sessions.js'
 // Serves session files to the renderer:
 //   resonant://session/<id>/reference.wav
 //   resonant://session/<id>/stems/drums.wav
+//   resonant://session/<id>/renders/speed-0.80_key+2/drums.flac
 export const SCHEME = 'resonant'
 
-const CONTENT_TYPES = { '.wav': 'audio/wav', '.json': 'application/json' }
+const CONTENT_TYPES = { '.wav': 'audio/wav', '.flac': 'audio/flac', '.json': 'application/json' }
 
 // Must run before the app is ready. Lets the page fetch() these URLs.
 export function registerSchemePrivileges() {

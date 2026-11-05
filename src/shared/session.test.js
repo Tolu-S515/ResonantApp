@@ -22,6 +22,9 @@ describe('sanitizeDetails', () => {
   it('keeps a bar shift', () => {
     expect(sanitizeDetails({ barShift: 0 })).toEqual({ barShift: 0 })
     expect(sanitizeDetails({ barShift: 3 })).toEqual({ barShift: 3 })
+    expect(sanitizeDetails({ speed: 0.75, transpose: -3 })).toEqual({ speed: 0.75, transpose: -3 })
+    expect(sanitizeDetails({ speed: 0.5 })).toEqual({ speed: 0.5 })
+    expect(sanitizeDetails({ speed: 1.25 })).toEqual({ speed: 1.25 })
   })
 
   it('drops unknown fields, so the UI cannot change anything else', () => {
@@ -41,6 +44,11 @@ describe('sanitizeDetails', () => {
     ['a bar shift past the longest bar', { barShift: 4 }],
     ['a fractional bar shift', { barShift: 1.5 }],
     ['a string bar shift', { barShift: '1' }],
+    ['a speed between steps', { speed: 0.93 }],
+    ['a speed too slow', { speed: 0.45 }],
+    ['a speed too fast', { speed: 1.3 }],
+    ['a key change too far', { transpose: 7 }],
+    ['a fractional key change', { transpose: 0.5 }],
   ])('rejects %s', (_label, input) => {
     expect(() => sanitizeDetails(input)).toThrow()
   })

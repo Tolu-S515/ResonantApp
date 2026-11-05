@@ -7,12 +7,15 @@ import { METERS, barStarts, beatGrid, clickEvents } from '../audio/grid.js'
 import { effectiveGains, muteToggled, showsMuted, soloToggled } from '../audio/mixer.js'
 import { MAX_TRACKS } from '../../../shared/audio-settings.js'
 import { findOutputDevice } from '../audio/output.js'
+import { formatSemitones, formatSpeed, transposeKey } from '../audio/transpose.js'
+import { MAX_TRANSPOSE, SPEEDS } from '../../../shared/session.js'
 import { freeInput, inputOptions, trackPeaks } from '../audio/instruments.js'
 import { useAudioMeters, useAudioState } from '../audio/useAudioState.js'
 import { useInstruments } from '../audio/useInstruments.js'
 import { ACTIVE_STATUSES, STAGE_LABELS, formatGain, formatTime } from '../format.js'
 import { GridLines, RulerBars } from '../components/BeatGrid.jsx'
 import CancelButton from '../components/CancelButton.jsx'
+import Dropdown from '../components/Dropdown.jsx'
 import InstrumentTrack from '../components/InstrumentTrack.jsx'
 import SettingsMenu from '../components/SettingsMenu.jsx'
 import Waveform from '../components/Waveform.jsx'
@@ -79,6 +82,8 @@ function Player() {
   // Which audio source finished loading (or failed); 'loading' is derived from it
   const [loadResult, setLoadResult] = useState({ key: null, state: null })
   const [isPlaying, setIsPlaying] = useState(false)
+  // Recording runs with playback, on the record-enabled instrument tracks
+  const [isRecording, setIsRecording] = useState(false)
   const [position, setPosition] = useState(0) // seconds
   const [duration, setDuration] = useState(0) // seconds
   const referenceFile = session?.files?.reference
@@ -187,6 +192,7 @@ function Player() {
         engine.pause()
         engine.seek(0)
         setIsPlaying(false)
+        setIsRecording(false)
         setPosition(0)
         return
       }
@@ -204,7 +210,25 @@ function Player() {
       engine.pause()
       setPosition(engine.position())
       setIsPlaying(false)
+      setIsRecording(false)
     } else {
+      engine.play()
+      setIsPlaying(true)
+    }
+  }
+
+  // Record: starts playback and records from the playhead. Pressing it again stops both.
+  // (Capturing audio comes with the engine side of recording.)
+  function toggleRecord() {
+    const engine = engineRef.current
+    if (!engine) return
+    if (isRecording) {
+      if (engine.playing) togglePlay()
+      setIsRecording(false)
+      return
+    }
+    setIsRecording(true)
+    if (!engine.playing) {
       engine.play()
       setIsPlaying(true)
     }
@@ -244,7 +268,22 @@ function Player() {
     [grid, timeSignature, barShift],
   )
 
-  // Render the click track whenever the grid or click settings change, and swap it in
+  // What the engine is actually playing: the speed (set in real time, a moment after
+  // it's chosen) and the key (a render, swapped in when ready). A new engine starts
+  // at normal speed on the original stems.
+  const [applied, setApplied] = useState({ audioKey: null, speed: 1, transpose: 0 })
+  const playingSpeed = applied.audioKey === audioKey ? applied.speed : 1
+  const playingTranspose = applied.audioKey === audioKey ? applied.transpose : 0
+  const markApplied = (changes) =>
+    setApplied((prev) => ({
+      ...(prev.audioKey === audioKey ? prev : { speed: 1, transpose: 0 }),
+      audioKey,
+      ...changes,
+    }))
+
+  // Render the click track whenever the grid, click settings or playing speed change,
+  // and swap it in. Built at the new tempo (beat times / speed) rather than stretched
+  // or pitch-corrected, so it stays sharp.
   useEffect(() => {
     const engine = engineRef.current
     if (!engine || !grid) return
@@ -253,15 +292,15 @@ function Player() {
       timeSignature,
       subdivision: metronome.subdivision,
       barShift,
-    })
-    renderClickTrack(events, duration).then(
+    }).map((event) => ({ ...event, time: event.time / playingSpeed }))
+    renderClickTrack(events, duration / playingSpeed).then(
       (buffer) => !cancelled && engine.setBuffer('metronome', buffer),
       (err) => !cancelled && setError(err.message),
     )
     return () => {
       cancelled = true
     }
-  }, [grid, duration, timeSignature, metronome.subdivision, barShift])
+  }, [grid, duration, timeSignature, metronome.subdivision, barShift, playingSpeed])
 
   useEffect(() => {
     engineRef.current?.setGain('metronome', metronome.enabled ? metronome.gain : 0)
@@ -269,11 +308,115 @@ function Player() {
 
   // Updates the page straight away, then saves; the saved session comes back
   // through onSessionUpdated.
-  const shiftBar = (delta) => {
-    const next = (((barShift + delta) % beatsPerBar) + beatsPerBar) % beatsPerBar
-    setSession((s) => ({ ...s, barShift: next }))
-    window.resonant.updateSessionDetails(sessionId, { barShift: next }).catch((err) => setError(err.message))
+  const saveDetails = (changes) => {
+    if (!sessionId) return
+    setSession((s) => ({ ...s, ...changes }))
+    window.resonant.updateSessionDetails(sessionId, changes).catch((err) => setError(err.message))
   }
+  const shiftBar = (delta) => saveDetails({ barShift: (((barShift + delta) % beatsPerBar) + beatsPerBar) % beatsPerBar })
+
+  // Practice speed and key change, saved with the session.
+  // (The UI for now: playback at the new speed/key comes with the Rubber Band renders.)
+  const speed = session?.speed ?? 1
+  const transpose = session?.transpose ?? 0
+  const speedOptions = SPEEDS.map((s) => ({ value: String(s), label: formatSpeed(s) }))
+  // Speed: applied in real time as soon as it's chosen (and saved with the session)
+  useEffect(() => {
+    const engine = engineRef.current
+    if (!engine || audioState !== 'ready' || playingSpeed === speed) return
+    let cancelled = false
+    engine.setSpeed(speed).then(
+      (done) => done && !cancelled && markApplied({ speed }),
+      (err) => !cancelled && setError(`Could not change speed: ${err.message}`),
+    )
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- markApplied only closes over audioKey
+  }, [audioKey, audioState, speed, playingSpeed])
+
+  // Key change being set up in the transport. Nothing renders until Render is pressed,
+  // which saves it to the session (the render below follows the saved value).
+  const [draft, setDraft] = useState(null) // { sessionId, transpose }
+  const draftTranspose = draft?.sessionId === sessionId ? draft.transpose : transpose
+  const setTranspose = (next) =>
+    setDraft({ sessionId, transpose: Math.max(-MAX_TRANSPOSE, Math.min(MAX_TRANSPOSE, next)) })
+  const draftChanged = draftTranspose !== transpose
+  const applyDraft = () => {
+    saveDetails({ transpose: draftTranspose })
+    setDraft(null)
+  }
+  // Key renders need the finished stems (or just the reference, if splitting stopped)
+  const canChangeKey =
+    Boolean(session?.files?.reference) && ['ready', 'cancelled', 'failed'].includes(session?.status)
+
+  // Gets the chosen key rendered (or the cached render), then swaps it in. The
+  // current version keeps playing meanwhile. Changing again cancels the render.
+  const [rendering, setRendering] = useState(null) // { done, total } while preparing
+  const needsSwap = playingTranspose !== transpose
+  useEffect(() => {
+    const engine = engineRef.current
+    if (!engine || audioState !== 'ready' || !canChangeKey || !needsSwap) return
+    let cancelled = false
+    setRendering({ done: 0, total: 0 })
+    const unsubscribe = window.resonant.onRenderProgress((progress) => {
+      if (!cancelled && progress.sessionId === sessionId) setRendering({ done: progress.done, total: progress.total })
+    })
+    window.resonant
+      .prepareRender(sessionId, transpose)
+      .then(async (result) => {
+        if (cancelled || result.cancelled) return
+        const decoded = await Promise.all(
+          Object.entries(result.files).map(async ([id, path]) => [
+            id,
+            await engine.decode(`resonant://session/${sessionId}/${path}`, id),
+          ]),
+        )
+        if (cancelled) return
+        engine.swapBuffers(new Map(decoded))
+        markApplied({ transpose })
+        setRendering(null)
+      })
+      .catch((err) => {
+        if (cancelled) return
+        setRendering(null)
+        setError(`Could not change key: ${err.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')}`)
+      })
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- markApplied only closes over audioKey
+  }, [audioKey, audioState, canChangeKey, needsSwap, sessionId, transpose])
+  const renderingShown = needsSwap && rendering
+
+  // Moves the playhead (keeps playing if it was)
+  function seekTo(time) {
+    const engine = engineRef.current
+    if (!engine || audioState !== 'ready') return
+    engine.seek(time)
+    setPosition(engine.position())
+  }
+
+  // Keyboard: Space plays/pauses, ← (or Home) goes back to the start.
+  // Left alone while typing, on sliders and dropdowns (they use the arrows), and
+  // Space is left to a focused button (it presses it).
+  const keysRef = useRef(null)
+  keysRef.current = { togglePlay, seekTo }
+  useEffect(() => {
+    function onKeyDown(event) {
+      if (event.metaKey || event.ctrlKey || event.altKey || event.defaultPrevented) return
+      const target = event.target
+      if (target.closest?.('input, textarea, select, [contenteditable="true"], [aria-haspopup], [role="listbox"]')) return
+      const keys = keysRef.current
+      if (event.key === ' ' && !target.closest?.('button, a')) keys.togglePlay()
+      else if (event.key === 'ArrowLeft' || event.key === 'Home') keys.seekTo(0)
+      else return
+      event.preventDefault()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
 
   // Playhead as a fraction of the song (0 = start, 1 = end)
   const playhead = duration > 0 ? position / duration : 0
@@ -310,6 +453,13 @@ function Player() {
   const channelCount =
     engineInfo?.inputChannels ?? Math.max(2, ...(instruments ?? []).flatMap((t) => t.inputs.map((c) => c + 1)))
 
+  const anyArmed = instruments?.some((t) => t.armed) ?? false
+  let recordHint = 'Record'
+  if (!engineInfo) recordHint = 'Connect your audio interface to record'
+  else if (speed !== 1 || playingSpeed !== 1) recordHint = 'Recording needs 100% speed (a key change is fine)'
+  else if (!anyArmed) recordHint = 'Enable recording on an instrument track first (the dot by its name)'
+  else if (isRecording) recordHint = 'Stop recording'
+
   const gains = effectiveGains(mixer)
   const analysis = session?.analysis
   const title = session ? (session.songName ?? session.source.fileName) : 'No session loaded'
@@ -328,11 +478,25 @@ function Player() {
         <dl className="player__info">
           <div>
             <dt>Key</dt>
-            <dd>{analysis ? `${analysis.key} ${analysis.scale}` : '—'}</dd>
+            <dd>
+              {analysis ? `${transposeKey(analysis.key, transpose)} ${analysis.scale}` : '—'}
+              {analysis && transpose !== 0 && (
+                <span className="player__original">
+                  {analysis.key} {formatSemitones(transpose)}
+                </span>
+              )}
+            </dd>
           </div>
           <div>
             <dt>BPM</dt>
-            <dd>{analysis ? Math.round(analysis.bpm) : '—'}</dd>
+            <dd>
+              {analysis ? Math.round(analysis.bpm * speed) : '—'}
+              {analysis && speed !== 1 && (
+                <span className="player__original">
+                  {Math.round(analysis.bpm)} at {formatSpeed(speed)}
+                </span>
+              )}
+            </dd>
           </div>
           <div>
             <dt>Time</dt>
@@ -347,22 +511,119 @@ function Player() {
       </header>
 
       <div className="transport">
-        <button
-          type="button"
-          className="transport__play"
-          aria-label={isPlaying ? 'Pause' : 'Play'}
-          disabled={audioState !== 'ready'}
-          onClick={togglePlay}
-        >
-          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-            <path d={isPlaying ? 'M6 5h4v14H6zM14 5h4v14h-4z' : 'M8 5v14l11-7z'} fill="currentColor" />
-          </svg>
-        </button>
+        <div className="transport__buttons">
+          <button
+            type="button"
+            className="transport__step"
+            aria-label="Back to start"
+            title="Back to start (←)"
+            disabled={audioState !== 'ready'}
+            onClick={() => seekTo(0)}
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+              <path d="M6 5h2v14H6zM19 5v14L9 12z" fill="currentColor" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            className="transport__play"
+            aria-label={isPlaying ? 'Pause' : 'Play'}
+            title={isPlaying ? 'Pause (Space)' : 'Play (Space)'}
+            disabled={audioState !== 'ready'}
+            onClick={togglePlay}
+          >
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+              <path d={isPlaying ? 'M6 5h4v14H6zM14 5h4v14h-4z' : 'M8 5v14l11-7z'} fill="currentColor" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            className="transport__record"
+            aria-label={isRecording ? 'Stop recording' : 'Record'}
+            aria-pressed={isRecording}
+            title={recordHint}
+            disabled={
+              audioState !== 'ready' ||
+              !engineInfo ||
+              ((!anyArmed || speed !== 1 || playingSpeed !== 1) && !isRecording)
+            }
+            onClick={toggleRecord}
+          >
+            <span className="record-dot" aria-hidden="true" />
+          </button>
+        </div>
         <span className="transport__time">
           {formatTime(position)} / {formatTime(duration)}
         </span>
+        <div className="transport__practice">
+          <div className="transport__field" title="Practice speed, applied straight away. The pitch stays the same.">
+            <span className="transport__label">Speed</span>
+            <Dropdown
+              className="transport__dropdown"
+              label="Speed"
+              value={String(speed)}
+              options={speedOptions}
+              disabled={!sessionId}
+              onChange={(value) => saveDetails({ speed: Number(value) })}
+            />
+          </div>
+          <div className="transport__field" title="Key change, in semitones. The speed stays the same.">
+            <span className="transport__label">Key</span>
+            <div className="stepper">
+              <button
+                type="button"
+                className="track__toggle"
+                aria-label="Key down a semitone"
+                disabled={!canChangeKey || draftTranspose <= -MAX_TRANSPOSE}
+                onClick={() => setTranspose(draftTranspose - 1)}
+              >
+                −
+              </button>
+              <button
+                type="button"
+                className="stepper__value"
+                aria-label={`Key change ${formatSemitones(draftTranspose)} semitones. Click to reset.`}
+                title="Click to reset"
+                disabled={!canChangeKey || draftTranspose === 0}
+                onClick={() => setTranspose(0)}
+              >
+                {formatSemitones(draftTranspose)}
+              </button>
+              <button
+                type="button"
+                className="track__toggle"
+                aria-label="Key up a semitone"
+                disabled={!canChangeKey || draftTranspose >= MAX_TRANSPOSE}
+                onClick={() => setTranspose(draftTranspose + 1)}
+              >
+                +
+              </button>
+            </div>
+            {analysis && (
+              <span className="transport__key-name" aria-live="polite">
+                {transposeKey(analysis.key, draftTranspose)} {analysis.scale}
+              </span>
+            )}
+          </div>
+          {draftChanged && (
+            <button
+              type="button"
+              className="transport__render"
+              title="Render the song in this key. The current version keeps playing meanwhile."
+              onClick={applyDraft}
+            >
+              {draftTranspose === 0 ? 'Back to original' : 'Render'}
+            </button>
+          )}
+          {renderingShown && (
+            <span className="transport__rendering" role="status">
+              <span className="transport__spinner" aria-hidden="true" />
+              {rendering.total ? `Preparing ${rendering.done}/${rendering.total}` : 'Preparing…'}
+            </span>
+          )}
+        </div>
         <div className="transport__backing" title="Turns the whole song and click down together, to leave room for your instrument. Double-click for 0 dB.">
-          <span className="transport__label">Backing</span>
+          <span className="transport__label">Song</span>
           <div className="gain">
             <input
               type="range"
@@ -371,7 +632,7 @@ function Player() {
               max={BACKING_MAX_DB}
               step="0.5"
               value={backingDb}
-              aria-label="Backing level"
+              aria-label="Song volume"
               aria-valuetext={formatGain(backingGain(backingDb))}
               onChange={(e) => setBackingDb(Number(e.target.value))}
               onDoubleClick={() => setBackingDb(0)}
@@ -518,6 +779,7 @@ function Player() {
               problem={nativeAudio?.error ?? null}
               onChange={(changes) => updateInstrument(index, changes)}
               onInputChange={(value) => setInstrumentInputs(index, value)}
+              recording={isRecording}
               onRemove={index > 0 ? () => removeInstrument(index) : undefined}
             />
           ))}

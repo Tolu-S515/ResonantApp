@@ -30,6 +30,12 @@ contextBridge.exposeInMainWorld('resonant', {
     return () => ipcRenderer.removeListener('session:updated', listener)
   },
 
+  // Key change: resolves with { files: { trackId: path } } once that key is rendered
+  // (or { cancelled: true } if a newer request replaced it)
+  prepareRender: (id, transpose) => ipcRenderer.invoke('render:prepare', id, transpose),
+  // callback({ sessionId, name, done, total }) as tracks finish rendering
+  onRenderProgress: (callback) => subscribe('render:progress', callback),
+
   // Audio interface and instrument monitoring (native engine)
   audio: {
     // [{ name, inputUid, outputUid, inputChannels, outputChannels, sampleRate, split }]
