@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router'
 import { BACKING_MAX_DB, BACKING_MIN_DB, backingGain, loadBackingDb, saveBackingDb } from '../audio/backing.js'
 import { renderClickTrack } from '../audio/click.js'
 import { epochOffset } from '../audio/clock.js'
+import { encodeWav, exportFileName, exportRanges, renderMix } from '../audio/export.js'
 import { defaultLoop, inLoop } from '../audio/loop.js'
 import { createEngine } from '../audio/engine.js'
 import { METERS, barStarts, beatGrid, clickEvents } from '../audio/grid.js'
@@ -14,11 +15,12 @@ import { MAX_TRANSPOSE, SPEEDS } from '../../../shared/session.js'
 import { freeInput, inputOptions, trackPeaks } from '../audio/instruments.js'
 import { useAudioMeters, useAudioState } from '../audio/useAudioState.js'
 import { useInstruments } from '../audio/useInstruments.js'
-import { activeTakes, useTakes } from '../audio/useTakes.js'
+import { activeTakes, clipId, takeGain, useTakes } from '../audio/useTakes.js'
 import { takesOnTrack } from '../../../shared/recording.js'
 import { ACTIVE_STATUSES, STAGE_LABELS, formatGain, formatTime } from '../format.js'
 import { GridLines, RulerBars } from '../components/BeatGrid.jsx'
 import CancelButton from '../components/CancelButton.jsx'
+import ExportMenu from '../components/ExportMenu.jsx'
 import ChordDisplay from '../components/ChordDisplay.jsx'
 import Dropdown from '../components/Dropdown.jsx'
 import InstrumentTrack from '../components/InstrumentTrack.jsx'
@@ -648,6 +650,31 @@ function Player() {
       .then(setSession)
       .catch((err) => setError(ipcMessage(err)))
 
+  // Export: what you hear (tracks, takes and levels as they are now) over a range,
+  // at 100% speed. The click is rebuilt at 100% when it's included.
+  const ranges = duration > 0 ? exportRanges({ takes: Object.values(chosenTakes), loop: loopOn ? loopRegion : null, duration }) : []
+  async function runExport(range, withClick) {
+    const engine = engineRef.current
+    if (!engine) throw new Error('The song isn’t loaded')
+    const loaded = engine.buffers()
+    const levels = effectiveGains(mixer)
+    const song = TRACKS.filter((t) => loaded.has(t.id)).map((t) => ({ buffer: loaded.get(t.id).buffer, gain: levels[t.id] }))
+    const clips = Object.entries(chosenTakes).flatMap(([track, take]) => {
+      const clip = loaded.get(clipId(take))
+      return clip ? [{ buffer: clip.buffer, start: take.start, gain: takeGain(take, instruments?.[track]?.gain ?? 1) }] : []
+    })
+    let click = null
+    if (withClick && grid) {
+      const events = clickEvents(grid.beats, { timeSignature, subdivision: metronome.subdivision, barShift })
+      click = { buffer: await renderClickTrack(events, duration), gain: metronome.gain }
+    }
+    const mix = await renderMix({ song, clips, click, backing: backingGain(backingDb), range })
+    return window.resonant.saveExport(exportFileName(title, range.value), encodeWav(mix))
+  }
+  let exportBlocked = null
+  if (audioState !== 'ready') exportBlocked = 'Export is available once the song has loaded'
+  else if (isRecording) exportBlocked = 'Stop recording to export'
+
   const anyArmed = instruments?.some((t) => t.armed) ?? false
   let recordHint = 'Record'
   if (!engineInfo) recordHint = 'Connect your audio interface to record'
@@ -702,7 +729,10 @@ function Player() {
             <dd>{analysis ? formatTime(analysis.durationSec) : '—'}</dd>
           </div>
         </dl>
-        <SettingsMenu />
+        <div className="player__menus">
+          <ExportMenu ranges={ranges} onExport={runExport} disabled={exportBlocked} />
+          <SettingsMenu />
+        </div>
       </header>
 
       <div className="transport">

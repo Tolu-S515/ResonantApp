@@ -1,7 +1,7 @@
-import { app, BrowserWindow, ipcMain, shell, systemPreferences, utilityProcess } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, shell, systemPreferences, utilityProcess } from 'electron'
 import { existsSync } from 'node:fs'
-import { rm } from 'node:fs/promises'
-import { join } from 'node:path'
+import { rm, writeFile } from 'node:fs/promises'
+import { basename, join } from 'node:path'
 import { createAudioController, createAudioHost } from './audio.js'
 import { CancelledError, createJobQueue, runChordDetection, runProcessing } from './processing.js'
 import { handleSessionProtocol, registerSchemePrivileges } from './protocol.js'
@@ -333,6 +333,30 @@ ipcMain.handle('recording:calibrate-start', async (event, inputChannel) => {
 ipcMain.handle('recording:calibrate-finish', (_event, expectedMs) => {
   stopWatchingRecorder()
   return recorder.finishCalibration(expectedMs)
+})
+
+// Export: the page renders the WAV; main asks where to save it. Resolves with the
+// saved path, or null if the dialog was cancelled.
+const MAX_EXPORT_BYTES = 2 * 1024 ** 3
+const savedExports = new Set() // paths this run saved, the only ones reveal will show
+ipcMain.handle('export:save', async (event, name, data) => {
+  if (typeof name !== 'string' || !name.endsWith('.wav') || name.length > 255) throw new Error('Invalid file name')
+  if (!(data instanceof ArrayBuffer || ArrayBuffer.isView(data)) || data.byteLength > MAX_EXPORT_BYTES) {
+    throw new Error('Invalid export')
+  }
+  const window = BrowserWindow.fromWebContents(event.sender)
+  const { canceled, filePath } = await dialog.showSaveDialog(window, {
+    title: 'Export',
+    defaultPath: join(app.getPath('downloads'), basename(name)),
+    filters: [{ name: 'WAV audio', extensions: ['wav'] }],
+  })
+  if (canceled || !filePath) return null
+  await writeFile(filePath, data instanceof ArrayBuffer ? Buffer.from(data) : Buffer.from(data.buffer, data.byteOffset, data.byteLength))
+  savedExports.add(filePath)
+  return filePath
+})
+ipcMain.handle('export:reveal', (_event, path) => {
+  if (savedExports.has(path)) shell.showItemInFolder(path)
 })
 
 app.whenReady().then(() => {

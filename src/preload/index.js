@@ -38,6 +38,12 @@ contextBridge.exposeInMainWorld('resonant', {
   // callback({ sessionId, name, done, total }) as tracks finish rendering
   onRenderProgress: (callback) => subscribe('render:progress', callback),
 
+  // Export: asks where to save `data` (a rendered WAV, ArrayBuffer) as `name`.
+  // Resolves with the saved path, or null if cancelled.
+  saveExport: (name, data) => ipcRenderer.invoke('export:save', name, data),
+  // Shows a file saved by saveExport in Finder
+  revealExport: (path) => ipcRenderer.invoke('export:reveal', path),
+
   // Recording takes on instrument tracks (native engine)
   recording: {
     // tracks: [{ index, inputs }]; options: { transpose }. Resolves { takes: [id] }

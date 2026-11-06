@@ -383,6 +383,13 @@ export function createEngine({ clickTrackId = 'metronome' } = {}) {
       if (playing) joinIn(t)
     },
 
+    // Every loaded track except the click, for export: Map of id → { buffer, start, clip }
+    buffers() {
+      const result = new Map()
+      for (const [id, t] of tracks) if (id !== clickTrackId && t.buffer) result.set(id, { buffer: t.buffer, start: t.start, clip: t.clip })
+      return result
+    },
+
     // Removes a clip track altogether
     removeClip(id) {
       const t = tracks.get(id)

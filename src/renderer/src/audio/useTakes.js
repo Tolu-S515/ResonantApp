@@ -5,7 +5,10 @@ import { bufferPeaks } from './peaks.js'
 // centre-panned monitoring you heard while playing; this evens it out.
 const MONO_GAIN = Math.SQRT1_2
 
-const clipId = (take) => `take:${take.id}`
+export const clipId = (take) => `take:${take.id}`
+
+// A take's playback level: its instrument track's gain (and the mono evening-out)
+export const takeGain = (take, trackGain) => trackGain * (take.channels === 1 ? MONO_GAIN : 1)
 
 // Each instrument track's chosen take, as { [track]: take }
 export function activeTakes(session) {
@@ -71,7 +74,7 @@ export function useTakes({ engineRef, audioKey, audioState, sessionId, session, 
     if (!engine) return
     for (const [track, take] of Object.entries(active)) {
       const gain = recordingTracks.includes(Number(track)) ? 0 : gainFor(Number(track))
-      engine.setGain(clipId(take), gain * (take.channels === 1 ? MONO_GAIN : 1))
+      engine.setGain(clipId(take), takeGain(take, gain))
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- summed up by gainKey
   }, [engineRef, gainKey, audioState, peaks])

@@ -13,6 +13,11 @@
   gap: 24px;
 }
 
+.player__menus {
+  display: flex;
+  gap: 8px;
+}
+
 .player__heading {
   display: flex;
   flex-direction: column;

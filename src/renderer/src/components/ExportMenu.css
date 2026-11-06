@@ -1,0 +1,108 @@
+/* Export panel (shares the dropdown frame with the settings menu) */
+.export-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(340px, calc(100vw - 32px));
+}
+
+.export-menu__title {
+  margin: 0;
+  color: var(--text-h);
+  font-size: 1rem;
+}
+
+.export-menu__hint {
+  margin: -6px 0 0;
+  font-size: 0.85rem;
+}
+
+.export-menu__ranges {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.export-menu__range {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.9rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.export-menu__range:hover:not(:disabled):not(.export-menu__range--selected) {
+  background: var(--code-bg);
+}
+
+.export-menu__range--selected {
+  border-color: var(--accent);
+  background: var(--accent-bg, var(--code-bg));
+}
+
+.export-menu__radio {
+  flex: none;
+  box-sizing: border-box;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border);
+  border-radius: 50%;
+}
+
+.export-menu__range--selected .export-menu__radio {
+  border: 4px solid var(--accent);
+}
+
+.export-menu__range-label {
+  flex: 1;
+  color: var(--text-h);
+  font-weight: 600;
+}
+
+.export-menu__range-time {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.export-menu__check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+}
+
+.export-menu__footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.export-menu__save {
+  padding: 8px 18px;
+}
+
+.export-menu__save:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.export-menu__link {
+  margin-right: auto;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
