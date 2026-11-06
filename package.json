@@ -6,6 +6,7 @@
   "description": "Musician practice app: split songs into stems and play along",
   "main": "./out/main/index.js",
   "scripts": {
+    "setup": "sh scripts/setup.sh",
     "dev": "electron-vite dev -w",
     "build": "electron-vite build",
     "preview": "electron-vite preview",

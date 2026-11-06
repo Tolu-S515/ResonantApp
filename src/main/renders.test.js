@@ -163,6 +163,17 @@ describe('createRenderer', () => {
     expect(existsSync(join(dir, sessionId, 'renders/speed-0.80_key+0'))).toBe(false)
   })
 
+  it('cancel(sessionId) stops the render and waits for its clean-up', async () => {
+    const slow = fakeSpawn({ hold: true })
+    const r = renderer({ spawn: slow.spawn })
+    const render = r.prepare(sessionId, files, 0.8, 0)
+    await new Promise((resolve) => setTimeout(resolve, 10)) // let it start
+    await r.cancel(sessionId)
+    expect(existsSync(join(dir, sessionId, 'renders/speed-0.80_key+0.partial'))).toBe(false)
+    await expect(render).rejects.toBeInstanceOf(RenderCancelledError)
+    await expect(r.cancel('nothing-running')).resolves.toBeUndefined()
+  })
+
   it('shares one render between repeated requests for the same speed and key', async () => {
     const slow = fakeSpawn({ hold: true })
     const r = renderer({ spawn: slow.spawn, parallel: 8 })

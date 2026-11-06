@@ -78,8 +78,11 @@ const renderer = createRenderer({
 })
 
 const enqueue = createJobQueue()
-// Session id → AbortController, for every job that is queued or running
+// Session id → { controller, running }, for every import that is queued or running.
+// running is the job's promise once it has started (null while it waits in the queue).
 const jobs = new Map()
+// Sessions moved to the Trash this run; queued work for them is skipped
+const deletedSessions = new Set()
 
 registerSchemePrivileges()
 
@@ -167,11 +170,14 @@ async function processSession(webContents, session, signal) {
 ipcMain.handle('session:import', async (event, sourcePath) => {
   const session = await createSession(sessionsDir(), sourcePath)
   // Start processing in the background; the UI follows along via 'session:updated'
-  const controller = new AbortController()
-  jobs.set(session.id, controller)
-  enqueue(() => processSession(event.sender, session, controller.signal)).finally(() =>
-    jobs.delete(session.id),
-  )
+  const job = { controller: new AbortController(), running: null }
+  jobs.set(session.id, job)
+  enqueue(() => {
+    // Deleted while it waited in the queue: there's no folder left to write to
+    if (deletedSessions.has(session.id)) return
+    job.running = processSession(event.sender, session, job.controller.signal)
+    return job.running
+  }).finally(() => jobs.delete(session.id))
   return session
 })
 
@@ -179,7 +185,7 @@ ipcMain.handle('session:import', async (event, sourcePath) => {
 // The session ends up with status 'cancelled' (sent via 'session:updated').
 ipcMain.handle('session:cancel', (_event, id) => {
   if (!isSessionId(id)) throw new Error('Invalid session id')
-  jobs.get(id)?.abort()
+  jobs.get(id)?.controller.abort()
 })
 
 // Song details form: name, artist, time signature. Only those fields can be changed this way.
@@ -191,11 +197,12 @@ ipcMain.handle('session:update-details', async (event, id, details) => {
 // Chords for a song imported before chord detection existed (its stems are reused).
 // Runs in the processing queue; repeated requests share one run. Resolves with the
 // updated session, which every window also gets via 'session:updated'.
-const chordJobs = new Map() // session id → promise
+const chordJobs = new Map() // session id → { promise, controller, running }
 const needsChords = (session) => session.status === 'ready' && !!session.files.stems && session.chords == null
 
 function findChords(id) {
   if (!chordJobs.has(id)) {
+    const entry = { controller: new AbortController(), running: null }
     const job = (async () => {
       const session = await readSession(sessionsDir(), id)
       if (!needsChords(session)) {
@@ -204,22 +211,26 @@ function findChords(id) {
       }
       const chordino = availableChordino()
       if (!chordino) throw new Error("Chord detection isn't built. Run: npm run build:chordino")
-      const chords = await enqueue(() =>
-        runChordDetection({
+      const chords = await enqueue(() => {
+        // Aborted (the session is being deleted) before its turn: rejects without starting
+        entry.running = runChordDetection({
           pythonPath: pythonPath(),
           scriptPath: join(processingDir(), 'process.py'),
           outputDir: sessionPath(sessionsDir(), id),
           chordinoPath: chordino,
-        }),
-      )
+          signal: entry.controller.signal,
+        })
+        return entry.running
+      })
       const updated = await updateSession(sessionsDir(), id, { chords })
       sendToWindows('session:updated', updated)
       return updated
     })()
-    chordJobs.set(id, job)
+    entry.promise = job
+    chordJobs.set(id, entry)
     job.finally(() => chordJobs.delete(id)).catch(() => {})
   }
-  return chordJobs.get(id)
+  return chordJobs.get(id).promise
 }
 
 // At startup: queue every older song that has stems but no chords yet
@@ -236,6 +247,28 @@ ipcMain.handle('session:detect-chords', (_event, id) => {
 })
 
 ipcMain.handle('session:list', () => listSessions(sessionsDir()))
+
+// Moves a session's folder (song, stems, renders, takes) to the Trash. Any import,
+// chord detection or key-change render for it is stopped first, and waited for, so
+// nothing writes into the folder after it's gone. Work still waiting in the queue
+// is aborted and skips itself when its turn comes.
+ipcMain.handle('session:delete', async (_event, id) => {
+  if (!isSessionId(id)) throw new Error('Invalid session id')
+  const dir = sessionPath(sessionsDir(), id)
+  if (!existsSync(join(dir, 'session.json'))) throw new Error('That session no longer exists')
+  deletedSessions.add(id)
+  const job = jobs.get(id)
+  const chords = chordJobs.get(id)
+  job?.controller.abort()
+  chords?.controller.abort()
+  await Promise.allSettled([job?.running, chords?.running, renderer.cancel(id)])
+  try {
+    await shell.trashItem(dir)
+  } catch (err) {
+    deletedSessions.delete(id)
+    throw new Error(`Couldn't move the session to the Trash: ${err.message}`)
+  }
+})
 
 ipcMain.handle('session:get', async (_event, id) => {
   if (!isSessionId(id)) throw new Error('Invalid session id')

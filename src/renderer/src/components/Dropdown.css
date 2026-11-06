@@ -60,7 +60,7 @@
   list-style: none;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--bg);
+  background: var(--surface);
   box-shadow: var(--shadow);
 }
 

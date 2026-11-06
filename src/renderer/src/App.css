@@ -48,7 +48,7 @@
   padding: 10px 28px;
   border-radius: 8px;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font: inherit;
   font-weight: 600;
   text-decoration: none;
@@ -244,7 +244,7 @@
 
 .segmented__option input:checked + span {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .segmented__option input:focus-visible + span {

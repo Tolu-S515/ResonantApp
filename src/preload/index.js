@@ -21,6 +21,8 @@ contextBridge.exposeInMainWorld('resonant', {
   updateSessionDetails: (id, details) => ipcRenderer.invoke('session:update-details', id, details),
   // All sessions, newest first
   listSessions: () => ipcRenderer.invoke('session:list'),
+  // Moves a session's folder (song, stems, takes) to the Trash, stopping any work on it first
+  deleteSession: (id) => ipcRenderer.invoke('session:delete', id),
   // Reads a session's current state from session.json
   getSession: (id) => ipcRenderer.invoke('session:get', id),
   // Finds chords for a song imported before chord detection; resolves with the updated session

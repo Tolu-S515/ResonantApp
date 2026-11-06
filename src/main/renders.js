@@ -226,6 +226,14 @@ export function createRenderer({
       return entry.promise
     },
 
+    // Stops the session's render, if any. Resolves once it has finished cleaning up.
+    async cancel(sessionId) {
+      const current = active.get(sessionId)
+      if (!current) return
+      current.controller.abort()
+      await current.promise.catch(() => {})
+    },
+
     cancelAll() {
       for (const { controller } of active.values()) controller.abort()
     },

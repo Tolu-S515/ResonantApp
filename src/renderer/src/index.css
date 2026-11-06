@@ -1,12 +1,18 @@
 :root {
-  --text: #6b6375;
-  --text-h: #08060d;
-  --bg: #fff;
-  --border: #e5e4e7;
-  --code-bg: #f4f3ec;
-  --accent: #aa3bff;
-  --accent-bg: rgba(170, 59, 255, 0.1);
-  --accent-border: rgba(170, 59, 255, 0.5);
+  /* Soft Minimal: off-white, charcoal, sage */
+  --text: #6a706b;
+  --text-h: #252a32;
+  --bg: #f5f4f0;
+  --surface: #ffffff; /* cards, panels, lanes */
+  --border: #e2e0d9;
+  --code-bg: #eeece6; /* subtle fills and hovers */
+  --accent: #252a32; /* primary actions, playhead */
+  --on-accent: #ffffff; /* text and icons on --accent */
+  --sage: #b7cdbd;
+  --sage-strong: #5f7f69; /* sage that reads as text */
+  --wave: #8fae98;
+  --accent-bg: rgba(183, 205, 189, 0.3);
+  --accent-border: #9db8a5;
   --social-bg: rgba(244, 243, 236, 0.5);
   --shadow:
     rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
@@ -32,14 +38,19 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --text: #9ca3af;
-    --text-h: #f3f4f6;
-    --bg: #16171d;
-    --border: #2e303a;
-    --code-bg: #1f2028;
-    --accent: #c084fc;
-    --accent-bg: rgba(192, 132, 252, 0.15);
-    --accent-border: rgba(192, 132, 252, 0.5);
+    --text: #a0a69f;
+    --text-h: #ecebe6;
+    --bg: #1a1d22;
+    --surface: #22262d;
+    --border: #343a42;
+    --code-bg: #2a2f37;
+    --accent: #b7cdbd;
+    --on-accent: #1a1d22;
+    --sage: #b7cdbd;
+    --sage-strong: #b7cdbd;
+    --wave: #9db8a5;
+    --accent-bg: rgba(183, 205, 189, 0.14);
+    --accent-border: rgba(183, 205, 189, 0.5);
     --social-bg: rgba(47, 48, 58, 0.5);
     --shadow:
       rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;

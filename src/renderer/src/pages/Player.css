@@ -60,6 +60,7 @@
   padding: 8px 12px;
   border: 1px solid var(--border);
   border-radius: 10px;
+  background: var(--surface);
 }
 
 .transport__play {
@@ -71,7 +72,7 @@
   border: none;
   border-radius: 50%;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   cursor: pointer;
 }
 
@@ -191,7 +192,7 @@
   border: none;
   border-radius: 6px;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font: inherit;
   font-size: 0.8rem;
   font-weight: 600;
@@ -306,7 +307,7 @@
 .transport__toggle[aria-pressed='true'] {
   border-color: var(--accent);
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .transport__gain {
@@ -386,7 +387,7 @@
 }
 
 .loop-bar--on .loop-bar__region {
-  background: var(--accent);
+  background: var(--sage);
 }
 
 /* Ends drawn as square brackets, [ and ], a little taller than the region */
@@ -419,9 +420,9 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  background: color-mix(in srgb, var(--accent) 7%, transparent);
-  border-left: 1px solid color-mix(in srgb, var(--accent) 50%, transparent);
-  border-right: 1px solid color-mix(in srgb, var(--accent) 50%, transparent);
+  background: color-mix(in srgb, var(--sage) 22%, transparent);
+  border-left: 1px solid var(--sage);
+  border-right: 1px solid var(--sage);
 }
 
 /* After Bar shift, with some space so it doesn't read as part of it */
@@ -571,14 +572,14 @@
   min-width: 0;
   overflow: hidden;
   border-radius: 8px;
-  background: var(--code-bg);
+  background: var(--surface);
 }
 
 .waveform {
   display: block;
   width: 100%;
   height: 100%;
-  color: var(--accent);
+  color: var(--wave);
 }
 
 /* Muted, or not soloed while something else is */

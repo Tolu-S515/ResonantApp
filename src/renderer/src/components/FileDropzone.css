@@ -44,7 +44,7 @@
   height: 56px;
   border-radius: 50%;
   background: var(--accent-bg);
-  color: var(--accent);
+  color: var(--sage-strong);
   transition: transform 0.15s;
 }
 
