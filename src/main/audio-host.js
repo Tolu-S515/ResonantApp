@@ -37,6 +37,9 @@ const methods = {
   clearTrack: (index) => engine.clearTrack(index),
   startLatencyTest: (options) => engine.startLatencyTest(options),
   latencyResult: () => engine.latencyResult(),
+  startRecording: (options) => engine.startRecording(options),
+  stopRecording: () => engine.stopRecording(),
+  recordingStatus: () => engine.recordingStatus(),
 }
 
 process.parentPort.on('message', ({ data }) => {

@@ -53,3 +53,16 @@ describe('sanitizeDetails', () => {
     expect(() => sanitizeDetails(input)).toThrow()
   })
 })
+
+describe('loop', () => {
+  it('accepts a loop or null', () => {
+    expect(sanitizeDetails({ loop: { start: 1, end: 5.5, enabled: true, x: 1 } })).toEqual({ loop: { start: 1, end: 5.5, enabled: true } })
+    expect(sanitizeDetails({ loop: null })).toEqual({ loop: null })
+  })
+
+  it('rejects a bad one', () => {
+    for (const loop of [{}, { start: 2, end: 2.2, enabled: true }, { start: -1, end: 4, enabled: true }, { start: 1, end: 4, enabled: 'yes' }, 7]) {
+      expect(() => sanitizeDetails({ loop })).toThrow('Invalid loop')
+    }
+  })
+})

@@ -38,6 +38,26 @@ contextBridge.exposeInMainWorld('resonant', {
   // callback({ sessionId, name, done, total }) as tracks finish rendering
   onRenderProgress: (callback) => subscribe('render:progress', callback),
 
+  // Recording takes on instrument tracks (native engine)
+  recording: {
+    // tracks: [{ index, inputs }]; options: { transpose }. Resolves { takes: [id] }
+    start: (sessionId, tracks, options) => ipcRenderer.invoke('recording:start', sessionId, tracks, options),
+    // segments: [{ epochMs, songTime }], the song time heard at each wall-clock time
+    // playback (re)started from during the recording (it restarts at each loop wrap)
+    reference: (segments) => ipcRenderer.invoke('recording:reference', segments),
+    // Resolves { session, takes, warning } (session is null if the take was too short).
+    // Without segments, uses the last ones sent with reference().
+    stop: (segments) => ipcRenderer.invoke('recording:stop', segments),
+    // takeId null: the track plays nothing
+    setActiveTake: (sessionId, track, takeId) => ipcRenderer.invoke('recording:set-active-take', sessionId, track, takeId),
+    // Moves the take's file to the Trash
+    deleteTake: (sessionId, takeId) => ipcRenderer.invoke('recording:delete-take', sessionId, takeId),
+    // Loopback calibration: start recording the input, play clicks, then finish with
+    // when they were heard (wall-clock ms). Resolves { offsetMs, heard }
+    startCalibration: (inputChannel) => ipcRenderer.invoke('recording:calibrate-start', inputChannel),
+    finishCalibration: (expectedMs) => ipcRenderer.invoke('recording:calibrate-finish', expectedMs),
+  },
+
   // Audio interface and instrument monitoring (native engine)
   audio: {
     // [{ name, inputUid, outputUid, inputChannels, outputChannels, sampleRate, split }]

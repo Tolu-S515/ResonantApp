@@ -335,7 +335,7 @@
   top: 0;
   z-index: 1;
   flex: none;
-  height: 24px;
+  height: 36px; /* loop strip on top, bar numbers below */
   margin-left: var(--lane-left);
   background: var(--bg);
   border-bottom: 1px solid var(--border);
@@ -356,10 +356,81 @@
   pointer-events: none;
 }
 
+/* Bar numbers sit under the loop strip */
+.timeline__ruler .ruler-bars {
+  top: 12px;
+  height: calc(100% - 12px);
+}
+
+/* Loop strip along the top of the ruler: grey while off, filled while looping */
+.loop-bar {
+  position: absolute;
+  top: 1px;
+  left: 0;
+  right: 0;
+  height: 10px;
+  cursor: crosshair;
+}
+
+.loop-bar__region {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: color-mix(in srgb, var(--text) 30%, transparent); /* square, to meet the brackets */
+  cursor: grab;
+}
+
+.loop-bar--on .loop-bar__region {
+  background: var(--accent);
+}
+
+/* Ends drawn as square brackets, [ and ], a little taller than the region */
+.loop-bar__handle {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  box-sizing: border-box;
+  width: 6px;
+  border: 2px solid color-mix(in srgb, var(--text) 70%, transparent);
+  cursor: ew-resize;
+}
+
+.loop-bar__handle--start {
+  left: -3px;
+  border-right: none;
+}
+
+.loop-bar__handle--end {
+  right: -3px;
+  border-left: none;
+}
+
+.loop-bar--on .loop-bar__handle {
+  border-color: var(--text-h);
+}
+
+/* The looped section, shaded across the lanes */
+.timeline__loop {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  border-left: 1px solid color-mix(in srgb, var(--accent) 50%, transparent);
+  border-right: 1px solid color-mix(in srgb, var(--accent) 50%, transparent);
+}
+
+/* After Bar shift, with some space so it doesn't read as part of it */
+.transport__loop {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 12px;
+  padding: 5px 9px;
+}
+
 /* Beat and bar lines over the lanes (below the ruler, above the waveforms) */
 .timeline__grid {
   position: absolute;
-  top: 24px;
+  top: 36px;
   bottom: 0;
   left: var(--lane-left);
   right: 0;
@@ -387,6 +458,10 @@
   margin-right: 4px;
 }
 
+.bar-shift svg {
+  display: block; /* no baseline gap, so the flex centring is exact */
+}
+
 .segmented--small .segmented__option span {
   padding: 4px 10px;
   font-family: inherit;
@@ -396,7 +471,7 @@
 /* Vertical line across all lanes */
 .timeline__playhead {
   position: absolute;
-  top: 24px;
+  top: 36px;
   bottom: 0;
   left: calc(var(--lane-left) + (100% - var(--lane-left)) * var(--playhead));
   width: 2px;
@@ -596,11 +671,61 @@
 }
 
 .track__lane--instrument {
+  position: relative; /* takes are placed along it */
   display: flex;
   align-items: center;
   padding: 0 16px;
   border: 1px dashed var(--border);
   background: transparent;
+}
+
+/* A take, from where it starts in the song to where it ends */
+.take-clip {
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  min-width: 2px;
+  border-radius: 4px;
+  background: rgba(248, 81, 73, 0.12);
+  color: #f85149;
+}
+
+.take-clip .waveform {
+  color: inherit;
+}
+
+/* The old take while a new one is recorded over it (it's silent meanwhile) */
+.take-clip--covered {
+  opacity: 0.3;
+}
+
+.take-clip--live {
+  background: rgba(248, 81, 73, 0.2);
+}
+
+/* Take picker, top-left of the lane, above the take */
+.take-picker {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 1;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.take-picker__dropdown {
+  min-width: 84px;
+  font-size: 0.72rem;
+}
+
+.take-picker__delete {
+  background: var(--bg);
+}
+
+.take-picker__delete:hover {
+  border-color: #f85149;
+  color: #f85149;
 }
 
 .track__lane--live {

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { BUFFER_SIZES } from '../../../shared/audio-settings.js'
+import { offsetKey } from '../../../shared/recording.js'
+import { calibrateRecording } from '../audio/calibrate.js'
 import { useAudioMeters, useAudioState, useDeviceChange } from '../audio/useAudioState.js'
 import Meter from './Meter.jsx'
 import './AudioSettingsPanel.css'
@@ -19,6 +21,8 @@ function AudioSettingsPanel() {
   const [interfaces, setInterfaces] = useState(null)
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(false)
+  const [calibrating, setCalibrating] = useState(false)
+  const [cableInput, setCableInput] = useState(0)
 
   // Lists interfaces again, and connects if the chosen one has appeared
   const rescan = useCallback(() => {
@@ -47,6 +51,15 @@ function AudioSettingsPanel() {
   const savedButMissing = settings.inputUid && interfaces && !selected
   const sampleRate = info?.sampleRate ?? selected?.sampleRate ?? 44100
   const shownError = error ?? state.error
+
+  // Saved offset, if it was measured with this interface and buffer size
+  const calibration = settings.recordOffset?.key === offsetKey(settings) ? settings.recordOffset : null
+
+  async function calibrate() {
+    setCalibrating(true)
+    await run(() => calibrateRecording({ interfaceName: settings.name, inputChannel: cableInput }))
+    setCalibrating(false)
+  }
 
   function chooseInterface(inputUid) {
     const chosen = interfaces.find((i) => i.inputUid === inputUid)
@@ -170,6 +183,51 @@ function AudioSettingsPanel() {
           <span className="audio-settings__hint">
             Play your instrument and set the interface&apos;s gain knob so the loudest parts stay out of the red.
           </span>
+        </section>
+      )}
+
+      {info && (
+        <section className="audio-settings__section">
+          <div className="audio-settings__field">
+            <span className="audio-settings__label">Recording sync</span>
+            <p className="audio-settings__info">
+              {calibration ? (
+                <>
+                  Calibrated: takes are moved <strong>{Math.abs(calibration.ms).toFixed(1)} ms</strong>{' '}
+                  {calibration.ms >= 0 ? 'later' : 'earlier'} to line up with the song.
+                </>
+              ) : (
+                'Not calibrated at this buffer size, so takes may land a few milliseconds off the beat.'
+              )}
+            </p>
+            <span id="audio-cable-label" className="audio-settings__hint">
+              Connect a cable from output 1 to an input, choose that input, then calibrate:
+            </span>
+            <div className="audio-settings__row">
+              <div className="audio-settings__buffers" role="radiogroup" aria-labelledby="audio-cable-label">
+                {Array.from({ length: info.inputChannels }, (_, c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    role="radio"
+                    aria-checked={c === cableInput}
+                    className={`audio-settings__buffer${c === cableInput ? ' audio-settings__buffer--selected' : ''}`}
+                    onClick={() => setCableInput(c)}
+                    disabled={busy}
+                  >
+                    <span className="audio-settings__buffer-frames audio-settings__nowrap">Input {c + 1}</span>
+                  </button>
+                ))}
+              </div>
+              <button type="button" className="audio-settings__rescan" onClick={calibrate} disabled={busy}>
+                {calibrating ? 'Listening…' : calibration ? 'Calibrate again' : 'Calibrate'}
+              </button>
+            </div>
+            <span className="audio-settings__hint">
+              It plays six loud clicks, so take your headphones off and pause the song first. Calibrate again after
+              changing the buffer size.
+            </span>
+          </div>
         </section>
       )}
     </div>

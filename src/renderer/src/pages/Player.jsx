@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router'
 import { BACKING_MAX_DB, BACKING_MIN_DB, backingGain, loadBackingDb, saveBackingDb } from '../audio/backing.js'
 import { renderClickTrack } from '../audio/click.js'
+import { epochOffset } from '../audio/clock.js'
+import { defaultLoop, inLoop } from '../audio/loop.js'
 import { createEngine } from '../audio/engine.js'
 import { METERS, barStarts, beatGrid, clickEvents } from '../audio/grid.js'
 import { effectiveGains, muteToggled, showsMuted, soloToggled } from '../audio/mixer.js'
@@ -12,15 +14,23 @@ import { MAX_TRANSPOSE, SPEEDS } from '../../../shared/session.js'
 import { freeInput, inputOptions, trackPeaks } from '../audio/instruments.js'
 import { useAudioMeters, useAudioState } from '../audio/useAudioState.js'
 import { useInstruments } from '../audio/useInstruments.js'
+import { activeTakes, useTakes } from '../audio/useTakes.js'
+import { takesOnTrack } from '../../../shared/recording.js'
 import { ACTIVE_STATUSES, STAGE_LABELS, formatGain, formatTime } from '../format.js'
 import { GridLines, RulerBars } from '../components/BeatGrid.jsx'
 import CancelButton from '../components/CancelButton.jsx'
 import ChordDisplay from '../components/ChordDisplay.jsx'
 import Dropdown from '../components/Dropdown.jsx'
 import InstrumentTrack from '../components/InstrumentTrack.jsx'
+import LoopBar from '../components/LoopBar.jsx'
 import SettingsMenu from '../components/SettingsMenu.jsx'
 import Waveform from '../components/Waveform.jsx'
 import './Player.css'
+
+// How often the page tells main which song time is playing, while recording
+const REFERENCE_INTERVAL_MS = 1000
+
+const ipcMessage = (err) => err.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
 
 // Backing-track order in the DAW view, top to bottom. Instrument tracks (live
 // input through the native engine) follow them.
@@ -83,8 +93,14 @@ function Player() {
   // Which audio source finished loading (or failed); 'loading' is derived from it
   const [loadResult, setLoadResult] = useState({ key: null, state: null })
   const [isPlaying, setIsPlaying] = useState(false)
-  // Recording runs with playback, on the record-enabled instrument tracks
+  // Recording runs with playback, on the record-enabled instrument tracks.
+  // recordingRef: { tracks, starting } while recording; live: what it has heard so
+  // far, for drawing ({ start, levels: { [track]: [peak, …] } }). Each pass round
+  // a loop starts a fresh drawing.
   const [isRecording, setIsRecording] = useState(false)
+  const recordingRef = useRef(null)
+  const [live, setLive] = useState(null)
+  const lastPosition = useRef(0)
   const [position, setPosition] = useState(0) // seconds
   const [duration, setDuration] = useState(0) // seconds
   const referenceFile = session?.files?.reference
@@ -197,14 +213,29 @@ function Player() {
       const engine = engineRef.current
       if (!engine) return
       const now = engine.position()
-      if (now >= engine.duration) {
+      if (now >= engine.duration && !engine.looping) {
+        stopRecording()
         engine.pause()
         engine.seek(0)
         setIsPlaying(false)
-        setIsRecording(false)
         setPosition(0)
         return
       }
+      // While recording: note each stretch of playback (one per pass round a loop),
+      // keep main up to date in case the page goes away, and start a fresh drawing
+      // when the loop wraps
+      const recording = recordingRef.current
+      if (recording && !recording.starting) {
+        const segments = recordingSegments()
+        if (segments && performance.now() - recording.sentAt > REFERENCE_INTERVAL_MS) {
+          recording.sentAt = performance.now()
+          window.resonant.recording.reference(segments).catch(() => {})
+        }
+        if (now < lastPosition.current - 0.05) {
+          setLive((prev) => prev && { start: now, levels: Object.fromEntries(Object.keys(prev.levels).map((t) => [t, []])) })
+        }
+      }
+      lastPosition.current = now
       setPosition(now)
       frame = requestAnimationFrame(tick)
     }
@@ -216,30 +247,103 @@ function Player() {
     const engine = engineRef.current
     if (!engine) return
     if (engine.playing) {
+      stopRecording()
       engine.pause()
       setPosition(engine.position())
       setIsPlaying(false)
-      setIsRecording(false)
     } else {
       engine.play()
       setIsPlaying(true)
     }
   }
 
-  // Record: starts playback and records from the playhead. Pressing it again stops both.
-  // (Capturing audio comes with the engine side of recording.)
-  function toggleRecord() {
+  // When each stretch of playback during this recording came out of the speakers,
+  // on the wall clock: what main needs to place the takes (see shared/recording.js).
+  // A stretch is noted the first time it's seen, as playback's segments come and go.
+  // Returns [{ epochMs, songTime }], or null if none yet.
+  function recordingSegments() {
+    const recording = recordingRef.current
+    const heard = engineRef.current?.heardSegments()
+    if (recording && heard) {
+      let offset = null
+      for (const segment of heard) {
+        if (recording.segments.has(segment.id)) continue
+        offset ??= epochOffset()
+        recording.segments.set(segment.id, { epochMs: segment.performanceTime + offset, songTime: segment.songTime })
+      }
+    }
+    return recording?.segments.size ? [...recording.segments.values()] : null
+  }
+
+  // Record: records the armed tracks from the playhead, starting playback if it
+  // isn't playing (and punching in if it is).
+  async function startRecording() {
     const engine = engineRef.current
-    if (!engine) return
-    if (isRecording) {
-      if (engine.playing) togglePlay()
+    if (!engine || recordingRef.current || !instruments) return
+    const tracks = instruments.flatMap((t, index) => (t.armed ? [{ index, inputs: t.inputs }] : []))
+    if (tracks.length === 0) return
+    const started = window.resonant.recording.start(sessionId, tracks, { transpose: playingTranspose })
+    // ready: settles once main has started (or failed to), so a stop can wait for it
+    const recording = {
+      tracks: tracks.map((t) => t.index),
+      starting: true,
+      ready: started.catch(() => {}),
+      segments: new Map(), // see recordingSegments
+      sentAt: 0,
+    }
+    recordingRef.current = recording
+    setIsRecording(true)
+    setError(null)
+    try {
+      await started
+    } catch (err) {
+      if (recordingRef.current === recording) recordingRef.current = null
       setIsRecording(false)
+      setError(`Could not record: ${ipcMessage(err)}`)
       return
     }
-    setIsRecording(true)
+    if (recordingRef.current !== recording) return // stopped while starting
+    recording.starting = false
     if (!engine.playing) {
       engine.play()
       setIsPlaying(true)
+    }
+    setLive({ start: engine.position(), levels: Object.fromEntries(recording.tracks.map((t) => [t, []])) })
+  }
+
+  // Stops recording (playback carries on) and saves the takes. Call before pausing
+  // or seeking: the take is placed using what's playing.
+  function stopRecording() {
+    const recording = recordingRef.current
+    if (!recording) return
+    const segments = recordingSegments()
+    recordingRef.current = null
+    setIsRecording(false)
+    setLive(null)
+    const finish = () =>
+      window.resonant.recording
+        .stop(segments ?? undefined)
+        .then((result) => {
+          if (result?.session) setSession(result.session)
+          if (result?.warning) setError(result.warning)
+        })
+        .catch((err) => setError(`Could not save the take: ${ipcMessage(err)}`))
+    // Pressed while it was still starting: stop once it has
+    recording.ready.then(finish)
+  }
+
+  function toggleRecord() {
+    const engine = engineRef.current
+    if (!engine) return
+    if (!isRecording) {
+      startRecording()
+      return
+    }
+    stopRecording()
+    if (engine.playing) {
+      engine.pause()
+      setPosition(engine.position())
+      setIsPlaying(false)
     }
   }
 
@@ -403,15 +507,40 @@ function Player() {
   function seekTo(time) {
     const engine = engineRef.current
     if (!engine || audioState !== 'ready') return
+    stopRecording()
     engine.seek(time)
     setPosition(engine.position())
+  }
+
+  // Practice loop, saved with the session. Until one is set, the first four bars are
+  // offered (greyed out). The engine only hears about changes once a drag lets go.
+  const savedLoop = session?.loop ?? null
+  const loopOn = Boolean(savedLoop?.enabled)
+  const [draftLoop, setDraftLoop] = useState(null) // { sessionId, region } while dragging
+  const loopRegion =
+    (draftLoop?.sessionId === sessionId ? draftLoop.region : null) ??
+    (savedLoop ? { start: savedLoop.start, end: savedLoop.end } : duration > 0 ? defaultLoop(bars, duration) : null)
+
+  useEffect(() => {
+    engineRef.current?.setLoop(loopOn ? { start: savedLoop.start, end: savedLoop.end } : null)
+  }, [loopOn, savedLoop?.start, savedLoop?.end, audioState, audioKey]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Saves the loop; if it's on and the playhead is outside it, jumps to its start
+  function saveLoop(region, enabled) {
+    saveDetails({ loop: { start: region.start, end: region.end, enabled } })
+    if (enabled && engineRef.current && !inLoop(region, engineRef.current.position())) seekTo(region.start)
+  }
+  const toggleLoop = () => loopRegion && saveLoop(loopRegion, !loopOn)
+  function commitLoop(region) {
+    setDraftLoop(null)
+    saveLoop(region, loopOn)
   }
 
   // Keyboard: Space plays/pauses, ← (or Home) goes back to the start.
   // Left alone while typing, on sliders and dropdowns (they use the arrows), and
   // Space is left to a focused button (it presses it).
   const keysRef = useRef(null)
-  keysRef.current = { togglePlay, seekTo }
+  keysRef.current = { togglePlay, seekTo, stopRecording }
   useEffect(() => {
     function onKeyDown(event) {
       if (event.metaKey || event.ctrlKey || event.altKey || event.defaultPrevented) return
@@ -435,6 +564,7 @@ function Player() {
     if (!engine || duration === 0) return
     const rect = event.currentTarget.getBoundingClientRect()
     const fraction = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width))
+    stopRecording()
     engine.seek(fraction * duration)
     setPosition(engine.position())
   }
@@ -461,6 +591,62 @@ function Player() {
   // Unknown while unplugged: offer at least what the tracks already use
   const channelCount =
     engineInfo?.inputChannels ?? Math.max(2, ...(instruments ?? []).flatMap((t) => t.inputs.map((c) => c + 1)))
+
+  // Draw what's being recorded as it comes in, from the input meters
+  useEffect(() => {
+    if (!recordingRef.current || recordingRef.current.starting) return
+    setLive((prev) =>
+      prev && {
+        ...prev,
+        levels: Object.fromEntries(
+          Object.entries(prev.levels).map(([track, levels]) => {
+            const [left, right] = trackPeaks(meters.tracks, Number(track))
+            return [track, [...levels, Math.max(left, right)]]
+          }),
+        ),
+      },
+    )
+  }, [meters])
+
+  // The interface went away mid-take: the engine has saved it, so finish up
+  useEffect(() => {
+    if (!engineInfo && recordingRef.current) keysRef.current.stopRecording()
+  }, [engineInfo])
+
+  // Leaving the player mid-take: save it
+  useEffect(
+    () => () => {
+      const recording = recordingRef.current
+      if (!recording) return
+      recordingRef.current = null
+      // Main has the timing from the last update it got
+      recording.ready.then(() => window.resonant.recording.stop()).catch(() => {})
+    },
+    [],
+  )
+
+  // Recorded takes, played on their instrument tracks
+  const takePeaks = useTakes({
+    engineRef,
+    audioKey,
+    audioState,
+    sessionId,
+    session,
+    gainFor: (track) => instruments?.[track]?.gain ?? 1,
+    recordingTracks: isRecording ? (recordingRef.current?.tracks ?? []) : [],
+    onError: (message) => setError(`Could not load a take: ${message}`),
+  })
+  const chosenTakes = activeTakes(session)
+  const selectTake = (track, takeId) =>
+    window.resonant.recording
+      .setActiveTake(sessionId, track, takeId)
+      .then(setSession)
+      .catch((err) => setError(ipcMessage(err)))
+  const deleteTake = (takeId) =>
+    window.resonant.recording
+      .deleteTake(sessionId, takeId)
+      .then(setSession)
+      .catch((err) => setError(ipcMessage(err)))
 
   const anyArmed = instruments?.some((t) => t.armed) ?? false
   let recordHint = 'Record'
@@ -692,14 +878,45 @@ function Player() {
             ))}
           </div>
           <div className="bar-shift" title="Move where bars start (the accent click, bar lines and numbers) if bar 1 isn't on the first beat">
-            <span>Bar start</span>
-            <button type="button" className="track__toggle" aria-label="Bar start one beat earlier" onClick={() => shiftBar(-1)}>
-              ‹
-            </button>
-            <button type="button" className="track__toggle" aria-label="Bar start one beat later" onClick={() => shiftBar(1)}>
-              ›
-            </button>
+            <span>Bar shift</span>
+            {[
+              [-1, 'Shift bars one beat earlier', 'M6.5 2 3.5 5l3 3'],
+              [1, 'Shift bars one beat later', 'M3.5 2l3 3-3 3'],
+            ].map(([delta, label, path]) => (
+              <button key={delta} type="button" className="track__toggle" aria-label={label} onClick={() => shiftBar(delta)}>
+                {/* Drawn, not a ‹ › character, so it sits exactly in the middle */}
+                <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
+                  <path d={path} fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+            ))}
           </div>
+          <button
+            type="button"
+            className="transport__toggle transport__loop"
+            aria-pressed={loopOn}
+            aria-label="Loop"
+            title={loopOn ? 'Stop looping' : 'Loop the section marked at the top of the timeline'}
+            disabled={!loopRegion}
+            onClick={toggleLoop}
+          >
+            <svg
+              viewBox="0 0 24 24"
+              width="16"
+              height="16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M17 2l4 4-4 4" />
+              <path d="M3 11V9a3 3 0 0 1 3-3h15" />
+              <path d="M7 22l-4-4 4-4" />
+              <path d="M21 13v2a3 3 0 0 1-3 3H3" />
+            </svg>
+          </button>
         </div>
       </div>
 
@@ -740,6 +957,14 @@ function Player() {
             onPointerMove={handleRulerPointerMove}
           >
             {grid && <RulerBars bars={bars} duration={duration} />}
+            <LoopBar
+              region={loopRegion}
+              enabled={loopOn}
+              duration={duration}
+              beats={grid?.beats}
+              onDraft={(region) => setDraftLoop({ sessionId, region })}
+              onCommit={commitLoop}
+            />
             <div className="timeline__playhead-handle" />
           </div>
           {TRACKS.map((track) => (
@@ -799,6 +1024,16 @@ function Player() {
               onChange={(changes) => updateInstrument(index, changes)}
               onInputChange={(value) => setInstrumentInputs(index, value)}
               recording={isRecording}
+              takes={takesOnTrack(session?.takes, index)}
+              activeTake={
+                chosenTakes[index] ? takesOnTrack(session?.takes, index).find((t) => t.id === chosenTakes[index].id) : null
+              }
+              takePeaks={chosenTakes[index] ? takePeaks[chosenTakes[index].id] : undefined}
+              live={live && live.levels[index] ? { start: live.start, levels: live.levels[index] } : null}
+              duration={duration}
+              position={position}
+              onSelectTake={(takeId) => selectTake(index, takeId)}
+              onDeleteTake={deleteTake}
               onRemove={index > 0 ? () => removeInstrument(index) : undefined}
             />
           ))}
@@ -820,6 +1055,15 @@ function Player() {
           {grid && (
             <div className="timeline__grid">
               <GridLines beats={grid.beats} bars={bars} duration={duration} />
+              {loopOn && loopRegion && (
+                <div
+                  className="timeline__loop"
+                  style={{
+                    left: `${(loopRegion.start / duration) * 100}%`,
+                    width: `${((loopRegion.end - loopRegion.start) / duration) * 100}%`,
+                  }}
+                />
+              )}
             </div>
           )}
           <div className="timeline__playhead" />

@@ -23,7 +23,9 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cstdio>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace resonant {
@@ -92,6 +94,26 @@ struct EngineStats {
   int largestOutputCallback = 0;
 };
 
+// Recording: each take is one track's input (mono or a stereo pair), saved raw
+// (before the track's gain) as a 24-bit WAV.
+constexpr int kMaxRecordChannels = 16;
+constexpr double kRecordBufferSeconds = 8;  // how far the disk may fall behind
+
+struct RecordTarget {
+  std::string path;
+  int left = -1;
+  int right = -1;  // -1 for mono
+};
+
+struct RecordingResult {
+  // Wall-clock time (ms since 1970) when the first recorded frame reached the
+  // driver, or 0 if nothing was recorded. Not yet corrected for input latency.
+  double startEpochMs = 0;
+  uint64_t frames = 0;   // per file
+  uint64_t dropped = 0;  // frames lost because the disk fell behind
+  std::string error;     // writing failed (the files may be cut short)
+};
+
 // Loopback test: output channel → cable → input channel, timed in samples
 constexpr int kLatencyPulses = 5;
 
@@ -125,6 +147,15 @@ class Engine {
   void startLatencyTest(int outputChannel, int inputChannel);
   LatencyResult latencyResult() const;
 
+  // Starts writing the targets' inputs to their files from the next callback.
+  // muteMonitoring silences the monitor mix meanwhile (for the loopback calibration).
+  void startRecording(const std::vector<RecordTarget>& targets, bool muteMonitoring);
+  // Finishes the files. Also called by stop(), so unplugging keeps the take; then
+  // this returns that result.
+  RecordingResult stopRecording();
+  bool recording() const { return writer_.joinable(); }
+  uint64_t recordedFrames() const { return recordWritten_.load(std::memory_order_relaxed); }
+
  private:
   static OSStatus outputCallback(void* ref, AudioUnitRenderActionFlags* flags, const AudioTimeStamp* timestamp,
                                  UInt32 bus, UInt32 frames, AudioBufferList* output);
@@ -137,6 +168,9 @@ class Engine {
   void pullFromBridge(UInt32 frames);
   void mix(const std::vector<std::vector<float>>& inputs, UInt32 frames, AudioBufferList* output);
   void runLatencyTest(const std::vector<std::vector<float>>& inputs, UInt32 frames, AudioBufferList* output);
+  void record(const AudioTimeStamp* timestamp, UInt32 frames);  // audio thread
+  void writeRecording();                                          // writer thread
+  bool drainRecording();                                          // writer thread
 
   AudioUnit outputUnit_ = nullptr;  // also does input when there's one device
   AudioUnit inputUnit_ = nullptr;   // split mode only
@@ -180,6 +214,31 @@ class Engine {
   int testInput_ = 0;
   uint64_t pulseAt_ = 0;  // frame the current pulse starts
   bool waiting_ = false;  // pulse sent, not heard back yet
+
+  // Recording. JS fills these before setting recordOn_, and the input thread
+  // only reads them while it's set. Input thread → ring buffer → writer thread → disk.
+  std::atomic<bool> recordOn_{false};
+  std::atomic<int> recordBusy_{0};  // input thread is inside record()
+  std::atomic<bool> monitorMuted_{false};
+  int recordChannels_[kMaxRecordChannels] = {};  // input channels kept, in ring order
+  int recordChannelCount_ = 0;
+  std::vector<float> recordRing_;  // interleaved recordChannelCount_ wide
+  uint64_t recordCapacity_ = 0;    // frames, power of two
+  std::atomic<uint64_t> recordWritten_{0};
+  std::atomic<uint64_t> recordRead_{0};
+  std::atomic<uint64_t> recordStartHost_{0};
+  std::atomic<uint64_t> recordDropped_{0};
+  struct RecordFile {
+    FILE* file = nullptr;
+    int ringLeft = 0;    // positions in the ring frame
+    int ringRight = -1;
+  };
+  std::vector<RecordFile> recordFiles_;
+  std::vector<uint8_t> recordScratch_;  // writer thread's encoding buffer
+  std::thread writer_;
+  std::atomic<bool> writerQuit_{false};
+  std::string writerError_;  // writer thread; read after join
+  RecordingResult lastRecording_;
 };
 
 }  // namespace resonant

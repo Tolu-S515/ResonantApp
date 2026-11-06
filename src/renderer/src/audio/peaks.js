@@ -26,3 +26,36 @@ export function peaksToColumns(peaks, columns) {
   }
   return { mins, maxs }
 }
+
+// Peaks of a decoded buffer, in the same form as a peaks file ({ data, length }),
+// all channels together: for takes, which have no peaks file.
+export function bufferPeaks(buffer, samplesPerPeak = 512) {
+  const channels = Array.from({ length: buffer.numberOfChannels }, (_, c) => buffer.getChannelData(c))
+  const length = Math.ceil(buffer.length / samplesPerPeak)
+  const data = new Int8Array(length * 2)
+  for (let p = 0; p < length; p++) {
+    let min = 0
+    let max = 0
+    const end = Math.min(buffer.length, (p + 1) * samplesPerPeak)
+    for (const samples of channels) {
+      for (let i = p * samplesPerPeak; i < end; i++) {
+        if (samples[i] < min) min = samples[i]
+        else if (samples[i] > max) max = samples[i]
+      }
+    }
+    data[2 * p] = Math.round(Math.max(-1, min) * PEAK_SCALE)
+    data[2 * p + 1] = Math.round(Math.min(1, max) * PEAK_SCALE)
+  }
+  return { data, length }
+}
+
+// Peaks for a list of levels (0..1), drawn symmetrically: for the take being recorded
+export function levelPeaks(levels) {
+  const data = new Int8Array(levels.length * 2)
+  levels.forEach((level, i) => {
+    const v = Math.round(Math.min(1, level) * PEAK_SCALE)
+    data[2 * i] = -v
+    data[2 * i + 1] = v
+  })
+  return { data, length: levels.length }
+}

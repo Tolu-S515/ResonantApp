@@ -18,7 +18,7 @@ describe('settings', () => {
   it('saves and merges a section', async () => {
     await updateSettings(dir, 'audio', { inputUid: 'in', outputUid: 'out' })
     await updateSettings(dir, 'audio', { bufferFrames: 128 })
-    expect((await readSettings(dir)).audio).toEqual({ inputUid: 'in', outputUid: 'out', name: null, bufferFrames: 128 })
+    expect((await readSettings(dir)).audio).toEqual({ inputUid: 'in', outputUid: 'out', name: null, bufferFrames: 128, recordOffset: null })
   })
 
   it('keeps every change when updates overlap', async () => {

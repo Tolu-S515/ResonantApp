@@ -61,10 +61,13 @@ export async function listSessions(sessionsDir) {
 // change would overwrite the other.
 const sessionLocks = new Map() // session folder → tail of its update chain
 
+// changes: fields to set, or a function from the current session to them (for
+// changes that build on what's there, like adding a take).
 export function updateSession(sessionsDir, id, changes) {
   const key = sessionPath(sessionsDir, id)
   const run = (sessionLocks.get(key) ?? Promise.resolve()).then(async () => {
-    const session = { ...(await readSession(sessionsDir, id)), ...changes }
+    const current = await readSession(sessionsDir, id)
+    const session = { ...current, ...(typeof changes === 'function' ? changes(current) : changes) }
     await writeJsonAtomic(sessionPath(sessionsDir, id, 'session.json'), session)
     return session
   })
@@ -110,9 +113,15 @@ export async function createSession(sessionsDir, sourcePath) {
       barShift: 0,
       speed: 1,
       transpose: 0,
+      // Practice loop { start, end, enabled } in song seconds, once one is set
+      loop: null,
       analysis: null,
       // Chord changes [{ time, chord }], found after stem splitting
       chords: null,
+      // Recorded takes [{ id, track, file, start, duration, ... }] (see recordings.js),
+      // and which one each instrument track plays: { [track]: take id }
+      takes: [],
+      activeTakes: {},
     }
     await writeJsonAtomic(join(sessionDir, 'session.json'), session)
     return session

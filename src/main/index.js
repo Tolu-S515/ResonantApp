@@ -1,10 +1,11 @@
-import { app, BrowserWindow, ipcMain, systemPreferences, utilityProcess } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, systemPreferences, utilityProcess } from 'electron'
 import { existsSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createAudioController, createAudioHost } from './audio.js'
 import { CancelledError, createJobQueue, runChordDetection, runProcessing } from './processing.js'
 import { handleSessionProtocol, registerSchemePrivileges } from './protocol.js'
+import { createRecorder } from './recordings.js'
 import { RenderCancelledError, createRenderer } from './renders.js'
 import { DEFAULT_INSTRUMENTS, sanitizeDeviceSettings, sanitizeInstruments, sanitizeTrack } from '../shared/audio-settings.js'
 import { MAX_TRANSPOSE, sanitizeDetails } from '../shared/session.js'
@@ -55,6 +56,19 @@ const audio = createAudioController({
     throw new Error('Resonant needs microphone access to hear your interface. Allow it in System Settings → Privacy & Security → Microphone.')
   },
   send: sendToWindows,
+})
+
+// Recording takes (written by the engine) and the loopback calibration
+const recorder = createRecorder({
+  call: (method, ...args) => audioHost.call(method, ...args),
+  audioState: () => audio.state(),
+  sessionsDir,
+  saveAudio: async (changes) => {
+    await updateSettings(app.getPath('userData'), 'audio', changes)
+    sendToWindows('audio:state', await audio.state())
+  },
+  trash: (path) => shell.trashItem(path),
+  tempDir: () => app.getPath('temp'),
 })
 
 // Key changes (Rubber Band renders of the stems)
@@ -268,6 +282,57 @@ ipcMain.handle('audio:set-track', (_event, index, settings) => audio.setTrack(in
 ipcMain.handle('audio:clear-track', (_event, index) => {
   sanitizeTrack(index, { left: 0, right: -1, gain: 1, pan: 0, monitor: true }) // validates the index
   return audio.clearTrack(index)
+})
+
+// Recording. The page that starts it stops it; if that page closes or reloads
+// first, what was recorded is still saved.
+let stopWatchingRecorder = () => {}
+function watchRecorder(webContents) {
+  const abandon = () => {
+    stopWatchingRecorder()
+    recorder
+      .abandon()
+      .then((result) => result?.session && sendToWindows('session:updated', result.session))
+      .catch((err) => console.warn(`Recording: ${err.message}`))
+  }
+  webContents.once('destroyed', abandon)
+  webContents.once('did-start-loading', abandon)
+  stopWatchingRecorder = () => {
+    webContents.off('destroyed', abandon)
+    webContents.off('did-start-loading', abandon)
+    stopWatchingRecorder = () => {}
+  }
+}
+
+ipcMain.handle('recording:start', async (event, sessionId, tracks, options) => {
+  const result = await recorder.start(sessionId, tracks, options)
+  watchRecorder(event.sender)
+  return result
+})
+ipcMain.handle('recording:reference', (_event, reference) => recorder.reference(reference))
+ipcMain.handle('recording:stop', async (_event, segments) => {
+  stopWatchingRecorder()
+  const result = await recorder.stop({ segments })
+  if (result?.session) sendToWindows('session:updated', result.session)
+  return result
+})
+ipcMain.handle('recording:set-active-take', async (_event, sessionId, track, takeId) => {
+  const session = await recorder.setActiveTake(sessionId, track, takeId)
+  sendToWindows('session:updated', session)
+  return session
+})
+ipcMain.handle('recording:delete-take', async (_event, sessionId, takeId) => {
+  const session = await recorder.deleteTake(sessionId, takeId)
+  sendToWindows('session:updated', session)
+  return session
+})
+ipcMain.handle('recording:calibrate-start', async (event, inputChannel) => {
+  await recorder.startCalibration(inputChannel)
+  watchRecorder(event.sender)
+})
+ipcMain.handle('recording:calibrate-finish', (_event, expectedMs) => {
+  stopWatchingRecorder()
+  return recorder.finishCalibration(expectedMs)
 })
 
 app.whenReady().then(() => {

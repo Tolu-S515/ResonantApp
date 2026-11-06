@@ -9,10 +9,13 @@ export const MAX_BAR_SHIFT = 3
 export const SPEEDS = Array.from({ length: 16 }, (_, i) => Math.round((0.5 + i * 0.05) * 100) / 100) // 0.5 … 1.25
 // Key change, in semitones either way
 export const MAX_TRANSPOSE = 6
+// Shortest loop, in seconds of song time
+export const MIN_LOOP_SECONDS = 0.5
+const MAX_SONG_SECONDS = 24 * 60 * 60
 
 // Returns only the recognised, valid fields from untrusted input:
-// trimmed strings (empty → null), a known time signature, a bar shift, a speed and a
-// key change. Throws on anything else.
+// trimmed strings (empty → null), a known time signature, a bar shift, a speed, a
+// key change and a loop ({ start, end, enabled } in song seconds, or null). Throws on anything else.
 export function sanitizeDetails(input) {
   if (typeof input !== 'object' || input === null) throw new Error('Invalid details')
   const details = {}
@@ -41,5 +44,21 @@ export function sanitizeDetails(input) {
     if (!Number.isInteger(transpose) || Math.abs(transpose) > MAX_TRANSPOSE) throw new Error('Invalid key change')
     details.transpose = transpose
   }
+  if ('loop' in input) details.loop = sanitizeLoop(input.loop)
   return details
+}
+
+function sanitizeLoop(loop) {
+  if (loop === null) return null
+  if (typeof loop !== 'object') throw new Error('Invalid loop')
+  const { start, end, enabled } = loop
+  const valid =
+    Number.isFinite(start) &&
+    Number.isFinite(end) &&
+    start >= 0 &&
+    end <= MAX_SONG_SECONDS &&
+    end - start >= MIN_LOOP_SECONDS - 1e-9 &&
+    typeof enabled === 'boolean'
+  if (!valid) throw new Error('Invalid loop')
+  return { start, end, enabled }
 }

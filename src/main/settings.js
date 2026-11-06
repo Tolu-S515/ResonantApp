@@ -8,7 +8,8 @@ const FILE = 'settings.json'
 export const DEFAULT_SETTINGS = {
   // The audio interface for monitoring and backing tracks. name is kept for
   // showing it while unplugged and for finding it among Web Audio's outputs.
-  audio: { inputUid: null, outputUid: null, name: null, bufferFrames: DEFAULT_BUFFER_FRAMES },
+  // recordOffset: { key, ms } from the loopback calibration (see shared/recording.js)
+  audio: { inputUid: null, outputUid: null, name: null, bufferFrames: DEFAULT_BUFFER_FRAMES, recordOffset: null },
   // Instrument tracks shown in every player (see sanitizeInstruments)
   instruments: { tracks: DEFAULT_INSTRUMENTS },
 }

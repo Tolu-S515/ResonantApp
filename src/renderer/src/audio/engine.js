@@ -16,6 +16,20 @@ import { closeShifter, createShifter, shifterDelay } from './shifter.js'
 // 100 s song takes 125 s to play, and position() still runs 0 → 100.
 //
 // Key changes are offline renders, swapped in with swapBuffers.
+//
+// Looping (setLoop): playback runs in segments, each a stretch of song from a start
+// point. At the loop end, every source stops and a fresh set starts from the loop
+// start at that same context time, so the wrap is sample-exact for every track. The
+// next segment is set up a little ahead of the wrap, which leaves time to move or
+// switch off the loop before it.
+//
+// Clips (recorded takes, setClip) are tracks that start at a song time instead of 0.
+// They have their own bus: the backing level (setBackingLevel) leaves them alone,
+// since they're your instrument, but they go through the shifter like the song.
+//
+//   song tracks → music bus → backing level ─┐
+//   clips ──────→ clip bus ──────────────────┴→ [shifter] → limiter → speakers
+//   click ──────→ click delay → backing level ───────────────↗
 
 // Small lead so every source is scheduled before its start time arrives
 const START_DELAY = 0.03
@@ -23,94 +37,188 @@ const START_DELAY = 0.03
 const GAIN_SMOOTHING = 0.01
 // Longest shifter delay the click can be held back to match
 const MAX_CLICK_DELAY = 1
+// How far ahead of a loop's end the wrap is scheduled
+const LOOP_LOOKAHEAD = 0.25
+// Segments are kept this long after they end, for position() (which looks back by
+// the output latency) and for recordings to read the wraps
+const SEGMENT_HISTORY = 2
 
 // The song is mastered to 0 dBFS, which leaves no room above it for the click.
 // Turning all song tracks down by this much gives the click real headroom: boosting
 // it then makes it louder instead of just pushing it into the limiter.
 export const MUSIC_BUS_DB = -6
 
-// clickTrackId: the track that bypasses the music bus (the metronome)
-export function createEngine({ clickTrackId = 'metronome' } = {}) {
-  const ctx = new AudioContext({ latencyHint: 'interactive' })
-  const master = ctx.createGain()
-
-  // Safety limiter: stems plus a loud click can exceed full scale, and the
-  // output hard-clips (audible crackle). This only acts on peaks above -1 dBFS.
-  // Its small look-ahead delays every track equally, so sync is unaffected.
+// Safety limiter: stems plus a loud click can exceed full scale, and the output
+// hard-clips (audible crackle). This only acts on peaks above -1 dBFS. Its small
+// look-ahead delays every track equally, so sync is unaffected; the recording
+// calibration plays through one too, so that delay is measured with the rest.
+export function createLimiter(ctx) {
   const limiter = ctx.createDynamicsCompressor()
   limiter.threshold.value = -1
   limiter.knee.value = 0
   limiter.ratio.value = 20
   limiter.attack.value = 0.001
   limiter.release.value = 0.1
+  return limiter
+}
+
+// clickTrackId: the track that bypasses the music bus (the metronome)
+export function createEngine({ clickTrackId = 'metronome' } = {}) {
+  const ctx = new AudioContext({ latencyHint: 'interactive' })
+  const master = ctx.createGain()
+  const limiter = createLimiter(ctx)
   master.connect(limiter)
+  limiter.connect(ctx.destination)
+
+  // Everything the shifter acts on (song tracks and clips) meets here
+  const shiftInput = ctx.createGain()
+  shiftInput.connect(master)
 
   const musicBus = ctx.createGain()
   musicBus.gain.value = 10 ** (MUSIC_BUS_DB / 20)
-  musicBus.connect(master)
-  limiter.connect(ctx.destination)
+  const songLevel = ctx.createGain() // backing level, for the song
+  musicBus.connect(songLevel)
+  songLevel.connect(shiftInput)
+
+  const clipBus = ctx.createGain()
+  clipBus.connect(shiftInput)
 
   // The click waits as long as the shifter takes, so they stay together
   const clickDelay = ctx.createDelay(MAX_CLICK_DELAY)
-  clickDelay.connect(master)
+  const clickLevel = ctx.createGain() // backing level, for the click
+  clickDelay.connect(clickLevel)
+  clickLevel.connect(master)
   let shifter = null // pitch shifter node while speed ≠ 1
   let shifterLag = 0 // seconds the music runs behind with the shifter in
   let speedRequest = 0
 
-  const tracks = new Map() // id → { buffer, gain, source }
+  const tracks = new Map() // id → { buffer, gain, source, start, clip }
   const loads = new Map() // id → load promise, so each track is fetched once
   let playing = false
-  let startedAt = 0 // context time at which playback started from `offset`
-  let offset = 0 // song time playback started from (or is paused at)
+  let offset = 0 // song time playback is paused at
+  // While playing: [{ when, at, end }], oldest first. Each plays song time `at` from
+  // context time `when` until context time `end` (Infinity while not looping).
+  let segments = []
+  let loop = null // { start, end } in song time, while looping
+  let wrapTimer = null
+  let segmentCount = 0
   let duration = 0 // song length (seconds)
   let speed = 1
   // Bumped by swapBuffers, so an original track that finishes loading afterwards
   // doesn't replace its key-changed version
   let generation = 0
 
-  function track(id) {
+  function track(id, { clip = false } = {}) {
     let t = tracks.get(id)
     if (!t) {
       const gain = ctx.createGain()
-      gain.connect(id === clickTrackId ? clickDelay : musicBus)
-      t = { buffer: null, gain, source: null }
+      gain.connect(id === clickTrackId ? clickDelay : clip ? clipBus : musicBus)
+      t = { buffer: null, gain, sources: new Set(), start: 0, clip }
       tracks.set(id, t)
     }
     return t
   }
 
-  // Starts a track's source at context time `when`, from song time `at`. Song tracks
-  // play at `speed`; the click's buffer is already at the new tempo, so it plays at
-  // normal rate from the matching point.
-  function startSource(t, when, at) {
+  // Plays a track's part of a segment, from context time `from` (default: the
+  // segment's start). Song tracks play at `speed`; the click's buffer is already at
+  // the new tempo, so it plays at normal rate from the matching point. A clip that
+  // starts later waits for its start.
+  function startSource(t, segment, from = segment.when) {
+    let when = Math.max(segment.when, from)
+    const at = segment.at + (when - segment.when) * speed
     const isClick = t === tracks.get(clickTrackId)
-    const bufferAt = isClick ? at / speed : at
+    let bufferAt = isClick ? at / speed : at - t.start
     if (!t.buffer || bufferAt >= t.buffer.duration) return
+    if (bufferAt < 0) {
+      when -= bufferAt / speed
+      bufferAt = 0
+    }
+    if (when >= segment.end) return
     const source = ctx.createBufferSource()
     source.buffer = t.buffer
     source.playbackRate.value = isClick ? 1 : speed
     source.connect(t.gain)
     source.start(when, bufferAt)
-    t.source = source
+    source.segment = segment
+    source.onended = () => {
+      source.disconnect()
+      t.sources.delete(source)
+    }
+    t.sources.add(source)
+  }
+
+  function stopSource(t) {
+    for (const source of t.sources) {
+      source.onended = null
+      source.stop()
+      source.disconnect()
+    }
+    t.sources.clear()
+  }
+
+  // A track that arrives mid-playback joins every segment still to play
+  function joinIn(t) {
+    const from = ctx.currentTime + START_DELAY
+    for (const segment of segments) if (segment.end > from) startSource(t, segment, from)
+  }
+
+  // Song length: the longest song track (clips and the click don't count)
+  const songDuration = () =>
+    Math.max(0, ...[...tracks].filter(([id, t]) => id !== clickTrackId && !t.clip).map(([, t]) => t.buffer?.duration ?? 0))
+
+  // The segment playing at context time `time` (the first, before any has started)
+  function segmentAt(time) {
+    for (let i = segments.length - 1; i > 0; i--) if (segments[i].when <= time) return segments[i]
+    return segments[0]
+  }
+
+  // Song time at context time `time`, while playing
+  function songTimeAt(time) {
+    const segment = segmentAt(time)
+    return segment.at + Math.max(0, time - segment.when) * speed
+  }
+
+  // Starts a segment: every track from song time `at` at context time `when`
+  function addSegment(when, at) {
+    const segment = { id: ++segmentCount, when, at, end: Infinity }
+    segments = segments.filter((s) => s.end > ctx.currentTime - SEGMENT_HISTORY)
+    segments.push(segment)
+    for (const t of tracks.values()) startSource(t, segment)
+    planWrap()
+  }
+
+  // Works out when the current segment reaches the loop's end (if it will) and sets
+  // up the wrap shortly before. Call whenever the loop changes.
+  function planWrap() {
+    clearTimeout(wrapTimer)
+    const segment = segments.at(-1)
+    if (!playing || !segment || segment.wrapped) return
+    const now = Math.max(ctx.currentTime, segment.when)
+    const songNow = segment.at + (now - segment.when) * speed
+    segment.end = loop && songNow < loop.end ? segment.when + (loop.end - segment.at) / speed : Infinity
+    if (segment.end === Infinity) return
+    wrapTimer = setTimeout(() => wrap(segment), Math.max(0, (segment.end - ctx.currentTime - LOOP_LOOKAHEAD) * 1000))
+  }
+
+  function wrap(segment) {
+    if (segments.at(-1) !== segment || !loop) return
+    segment.wrapped = true
+    for (const t of tracks.values()) {
+      for (const source of t.sources) if (source.segment === segment) source.stop(segment.end)
+    }
+    addSegment(segment.end, loop.start)
   }
 
   function startSources(at) {
-    const when = ctx.currentTime + START_DELAY
-    startedAt = when
+    segments = []
     offset = at
-    for (const t of tracks.values()) startSource(t, when, at)
+    addSegment(ctx.currentTime + START_DELAY, at)
   }
 
-  // Song time a source started at context time `when` should start from
-  const songTimeAt = (when) => offset + (when - startedAt) * speed
-
   function stopSources() {
-    for (const t of tracks.values()) {
-      if (!t.source) continue
-      t.source.stop()
-      t.source.disconnect()
-      t.source = null
-    }
+    clearTimeout(wrapTimer)
+    for (const t of tracks.values()) stopSource(t)
+    segments = []
   }
 
   const clamp = (time) => Math.min(Math.max(time, 0), duration)
@@ -134,10 +242,7 @@ export function createEngine({ clickTrackId = 'metronome' } = {}) {
           const t = track(id)
           t.buffer = buffer
           duration = Math.max(duration, buffer.duration)
-          if (playing) {
-            const when = ctx.currentTime + START_DELAY
-            startSource(t, when, songTimeAt(when))
-          }
+          if (playing) joinIn(t)
         })()
         // Allow a retry after a failure
         promise.catch(() => loads.delete(id))
@@ -156,17 +261,16 @@ export function createEngine({ clickTrackId = 'metronome' } = {}) {
     // Song time currently coming out of the speakers. Subtracting the output latency
     // (and the shifter's lag) keeps the playhead with what you hear, not what's scheduled.
     position() {
-      if (!playing) return offset
-      const elapsed = ctx.currentTime - (ctx.outputLatency || 0) - shifterLag - startedAt
-      return clamp(offset + Math.max(0, elapsed) * speed)
+      if (!playing || segments.length === 0) return offset
+      return clamp(songTimeAt(ctx.currentTime - (ctx.outputLatency || 0) - shifterLag))
     },
 
     play() {
       if (playing || duration === 0) return
       ctx.resume()
       if (offset >= duration) offset = 0
+      playing = true // first: starting the sources plans the loop wrap, which only happens while playing
       startSources(offset)
-      playing = true
     },
 
     pause() {
@@ -189,16 +293,9 @@ export function createEngine({ clickTrackId = 'metronome' } = {}) {
     // Doesn't change the song's duration.
     setBuffer(id, buffer) {
       const t = track(id)
-      if (t.source) {
-        t.source.stop()
-        t.source.disconnect()
-        t.source = null
-      }
+      stopSource(t)
       t.buffer = buffer
-      if (playing) {
-        const when = ctx.currentTime + START_DELAY
-        startSource(t, when, songTimeAt(when))
-      }
+      if (playing) joinIn(t)
     },
 
     // Replaces the song tracks all at once (buffers: Map of id → AudioBuffer), e.g.
@@ -209,7 +306,7 @@ export function createEngine({ clickTrackId = 'metronome' } = {}) {
       if (playing) stopSources()
       generation++
       for (const [id, buffer] of buffers) track(id).buffer = buffer
-      duration = Math.max(0, ...[...tracks].filter(([id]) => id !== clickTrackId).map(([, t]) => t.buffer?.duration ?? 0))
+      duration = songDuration()
       offset = clamp(at)
       if (playing) startSources(offset)
     },
@@ -230,14 +327,14 @@ export function createEngine({ clickTrackId = 'metronome' } = {}) {
       }
       const at = this.position()
       if (playing) stopSources()
-      musicBus.disconnect()
+      shiftInput.disconnect()
       if (shifter) closeShifter(shifter)
       shifter = node
       if (shifter) {
-        musicBus.connect(shifter)
+        shiftInput.connect(shifter)
         shifter.connect(master)
       } else {
-        musicBus.connect(master)
+        shiftInput.connect(master)
       }
       speed = next
       shifterLag = lag
@@ -247,6 +344,11 @@ export function createEngine({ clickTrackId = 'metronome' } = {}) {
       offset = clamp(at)
       if (playing) startSources(offset)
       return true
+    },
+
+    // True while playback will wrap back to the loop start (rather than run on)
+    get looping() {
+      return playing && segments.some((s) => s.end < Infinity)
     },
 
     get speed() {
@@ -260,7 +362,56 @@ export function createEngine({ clickTrackId = 'metronome' } = {}) {
     // Level of everything this engine plays (song tracks and click), before the
     // limiter. Turning it down leaves room for the live instrument on top.
     setBackingLevel(value) {
-      master.gain.setTargetAtTime(value, ctx.currentTime, GAIN_SMOOTHING)
+      songLevel.gain.setTargetAtTime(value, ctx.currentTime, GAIN_SMOOTHING)
+      clickLevel.gain.setTargetAtTime(value, ctx.currentTime, GAIN_SMOOTHING)
+    },
+
+    // Puts a clip on track `id`: `buffer` played from song time `start` (seconds,
+    // may be negative), replacing what was there. Joins in if playing. Doesn't
+    // change the song's duration.
+    setClip(id, buffer, start) {
+      const t = track(id, { clip: true })
+      if (!t.clip) {
+        // Its level was set before it loaded, which made it a song track
+        t.gain.disconnect()
+        t.gain.connect(clipBus)
+        t.clip = true
+      }
+      stopSource(t)
+      t.buffer = buffer
+      t.start = start
+      if (playing) joinIn(t)
+    },
+
+    // Removes a clip track altogether
+    removeClip(id) {
+      const t = tracks.get(id)
+      if (!t?.clip) return
+      stopSource(t)
+      t.gain.disconnect()
+      tracks.delete(id)
+    },
+
+    // When each recent segment started coming out of the speakers, on the page's
+    // clock: [{ id, performanceTime, songTime }], oldest first. A recording that runs
+    // across loop wraps is split into passes with these. Null when not playing.
+    heardSegments() {
+      if (!playing || segments.length === 0) return null
+      const { contextTime, performanceTime } = ctx.getOutputTimestamp()
+      if (!(contextTime > 0)) return null
+      return segments.map((s) => ({
+        id: s.id,
+        performanceTime: performanceTime + (s.when + shifterLag - contextTime) * 1000,
+        songTime: s.at,
+      }))
+    },
+
+    // Loops song time { start, end } (null: no loop). Mid-song it takes effect from
+    // the current position: playback carries on and wraps at the new end (if the
+    // playhead is past it, it plays on to the end of the song).
+    setLoop(region) {
+      loop = region && region.end > region.start ? { start: region.start, end: region.end } : null
+      planWrap()
     },
 
     // Plays through this output device ('' = the system default). Ids come from
@@ -271,6 +422,7 @@ export function createEngine({ clickTrackId = 'metronome' } = {}) {
     },
 
     close() {
+      clearTimeout(wrapTimer)
       stopSources()
       playing = false
       return ctx.close()

@@ -250,3 +250,8 @@
   font-size: 0.72rem;
   white-space: nowrap;
 }
+
+/* Recording sync: "Input 1" stays on one line */
+.audio-settings__nowrap {
+  white-space: nowrap;
+}

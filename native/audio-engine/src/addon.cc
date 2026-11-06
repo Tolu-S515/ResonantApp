@@ -179,6 +179,52 @@ Napi::Value LatencyResult(const Napi::CallbackInfo& info) {
   return object;
 }
 
+// startRecording({ targets: [{ path, left, right = -1 }], muteMonitoring = false })
+Napi::Value StartRecording(const Napi::CallbackInfo& info) {
+  return guarded(info, [&]() -> Napi::Value {
+    if (!info[0].IsObject()) throw std::runtime_error("startRecording() needs an options object");
+    Napi::Object options = info[0].As<Napi::Object>();
+    if (!options.Get("targets").IsArray()) throw std::runtime_error("targets is required");
+    Napi::Array list = options.Get("targets").As<Napi::Array>();
+    std::vector<resonant::RecordTarget> targets;
+    for (uint32_t i = 0; i < list.Length(); i++) {
+      Napi::Value item = list.Get(i);
+      if (!item.IsObject()) throw std::runtime_error("Invalid recording target");
+      Napi::Object object = item.As<Napi::Object>();
+      if (!object.Get("path").IsString()) throw std::runtime_error("Recording target needs a path");
+      resonant::RecordTarget target;
+      target.path = object.Get("path").As<Napi::String>();
+      target.left = optionalInt(object, "left", -1);
+      target.right = optionalInt(object, "right", -1);
+      targets.push_back(target);
+    }
+    Napi::Value mute = options.Get("muteMonitoring");
+    engine(info.Env()).startRecording(targets, mute.IsBoolean() && mute.As<Napi::Boolean>().Value());
+    return info.Env().Undefined();
+  });
+}
+
+// stopRecording() → { startEpochMs, frames, dropped, error } (error is null if none)
+Napi::Value StopRecording(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  auto result = engine(env).stopRecording();
+  Napi::Object object = Napi::Object::New(env);
+  object.Set("startEpochMs", result.startEpochMs);
+  object.Set("frames", static_cast<double>(result.frames));
+  object.Set("dropped", static_cast<double>(result.dropped));
+  object.Set("error", result.error.empty() ? env.Null() : Napi::String::New(env, result.error));
+  return object;
+}
+
+// recordingStatus() → { recording, frames }
+Napi::Value RecordingStatus(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  Napi::Object object = Napi::Object::New(env);
+  object.Set("recording", engine(env).recording());
+  object.Set("frames", static_cast<double>(engine(env).recordedFrames()));
+  return object;
+}
+
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
   env.SetInstanceData(new Engine());  // deleted (and audio stopped) when the process unloads the addon
   exports.Set("listDevices", Napi::Function::New(env, ListDevices));
@@ -192,6 +238,9 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("takeInputPeaks", Napi::Function::New(env, TakeInputPeaks));
   exports.Set("startLatencyTest", Napi::Function::New(env, StartLatencyTest));
   exports.Set("latencyResult", Napi::Function::New(env, LatencyResult));
+  exports.Set("startRecording", Napi::Function::New(env, StartRecording));
+  exports.Set("stopRecording", Napi::Function::New(env, StopRecording));
+  exports.Set("recordingStatus", Napi::Function::New(env, RecordingStatus));
   return exports;
 }
 

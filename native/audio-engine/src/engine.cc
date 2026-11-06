@@ -1,7 +1,12 @@
 #include "engine.h"
 
+#include <mach/mach_time.h>
+
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstring>
+#include <ctime>
 #include <stdexcept>
 
 namespace resonant {
@@ -230,6 +235,60 @@ std::vector<DeviceInfo> listDevices() {
   return devices;
 }
 
+namespace {
+
+// 24-bit PCM WAV. The header is written with zero sizes first and patched when
+// the file is finished, so a crash leaves a file most tools can still open.
+constexpr int kWavHeaderBytes = 44;
+constexpr int kRecordBytesPerSample = 3;
+constexpr auto kWriterInterval = std::chrono::milliseconds(20);
+
+void putLE(uint8_t* at, uint32_t value, int bytes) {
+  for (int i = 0; i < bytes; i++) at[i] = static_cast<uint8_t>(value >> (8 * i));
+}
+
+void wavHeader(uint8_t* header, int channels, double sampleRate, uint64_t frames) {
+  const uint32_t dataBytes = static_cast<uint32_t>(std::min<uint64_t>(frames * channels * kRecordBytesPerSample, 0xFFFFFFFFull - 36));
+  const uint32_t rate = static_cast<uint32_t>(sampleRate);
+  std::memcpy(header, "RIFF", 4);
+  putLE(header + 4, 36 + dataBytes, 4);
+  std::memcpy(header + 8, "WAVEfmt ", 8);
+  putLE(header + 16, 16, 4);  // fmt chunk size
+  putLE(header + 20, 1, 2);   // PCM
+  putLE(header + 22, static_cast<uint32_t>(channels), 2);
+  putLE(header + 24, rate, 4);
+  putLE(header + 28, rate * channels * kRecordBytesPerSample, 4);
+  putLE(header + 32, static_cast<uint32_t>(channels * kRecordBytesPerSample), 2);
+  putLE(header + 34, 8 * kRecordBytesPerSample, 2);
+  std::memcpy(header + 36, "data", 4);
+  putLE(header + 40, dataBytes, 4);
+}
+
+void putSample(uint8_t* at, float value) {
+  const auto scaled = static_cast<int32_t>(std::lrint(std::clamp(value, -1.0f, 1.0f) * 8388607.0f));
+  putLE(at, static_cast<uint32_t>(scaled), 3);
+}
+
+double hostToMs(uint64_t host) {
+  static mach_timebase_info_data_t timebase = [] {
+    mach_timebase_info_data_t info;
+    mach_timebase_info(&info);
+    return info;
+  }();
+  return static_cast<double>(host) * timebase.numer / timebase.denom / 1e6;
+}
+
+// Wall-clock time of a host time stamp (mach_absolute_time), in ms since 1970
+double hostToEpochMs(uint64_t host) {
+  const uint64_t nowHost = mach_absolute_time();
+  timespec now{};
+  clock_gettime(CLOCK_REALTIME, &now);
+  const double nowEpochMs = static_cast<double>(now.tv_sec) * 1e3 + static_cast<double>(now.tv_nsec) / 1e6;
+  return nowEpochMs - (hostToMs(nowHost) - hostToMs(host));
+}
+
+}  // namespace
+
 Engine::~Engine() { stop(); }
 
 void Engine::start(const std::string& inputUid, const std::string& outputUid, int bufferFrames) {
@@ -358,6 +417,7 @@ void Engine::stop() {
     *unit = nullptr;
   }
   latencyState_.store(static_cast<int>(LatencyState::Idle));
+  if (recording()) lastRecording_ = stopRecording();
 }
 
 EngineStats Engine::stats() const {
@@ -413,6 +473,155 @@ LatencyResult Engine::latencyResult() const {
   return result;
 }
 
+void Engine::startRecording(const std::vector<RecordTarget>& targets, bool muteMonitoring) {
+  if (!running()) throw std::runtime_error("Audio is not running");
+  if (recording()) throw std::runtime_error("Already recording");
+  if (targets.empty()) throw std::runtime_error("Nothing to record");
+
+  // The input channels to keep, each once, and where each file finds its own
+  recordChannelCount_ = 0;
+  auto ringIndex = [&](int channel) {
+    if (channel < 0 || channel >= info_.inputChannels) throw std::runtime_error("No such input channel");
+    for (int i = 0; i < recordChannelCount_; i++) {
+      if (recordChannels_[i] == channel) return i;
+    }
+    if (recordChannelCount_ == kMaxRecordChannels) throw std::runtime_error("Too many input channels to record");
+    recordChannels_[recordChannelCount_] = channel;
+    return recordChannelCount_++;
+  };
+  std::vector<RecordFile> files;
+  auto closeAll = [&] {
+    for (auto& f : files) std::fclose(f.file);
+  };
+  try {
+    for (const auto& target : targets) {
+      RecordFile f;
+      f.ringLeft = ringIndex(target.left);
+      f.ringRight = target.right >= 0 ? ringIndex(target.right) : -1;
+      f.file = std::fopen(target.path.c_str(), "wb");
+      if (!f.file) throw std::runtime_error("Could not create " + target.path);
+      files.push_back(f);
+      uint8_t header[kWavHeaderBytes];
+      wavHeader(header, f.ringRight >= 0 ? 2 : 1, info_.sampleRate, 0);
+      if (std::fwrite(header, 1, sizeof header, f.file) != sizeof header) throw std::runtime_error("Could not write " + target.path);
+    }
+  } catch (...) {
+    closeAll();
+    throw;
+  }
+
+  recordCapacity_ = nextPowerOfTwo(static_cast<uint64_t>(info_.sampleRate * kRecordBufferSeconds));
+  recordRing_.assign(recordCapacity_ * recordChannelCount_, 0.0f);
+  recordScratch_.assign(static_cast<size_t>(maxFrames_ + recordCapacity_) * 2 * kRecordBytesPerSample, 0);
+  recordFiles_ = std::move(files);
+  recordWritten_.store(0);
+  recordRead_.store(0);
+  recordStartHost_.store(0);
+  recordDropped_.store(0);
+  writerError_.clear();
+  writerQuit_.store(false);
+  lastRecording_ = RecordingResult{};
+  monitorMuted_.store(muteMonitoring);
+  writer_ = std::thread([this] { writeRecording(); });
+  recordOn_.store(true, std::memory_order_release);
+}
+
+RecordingResult Engine::stopRecording() {
+  if (!recording()) return lastRecording_;
+  recordOn_.store(false, std::memory_order_release);
+  // Let a callback that saw recordOn_ before it changed finish with the ring
+  while (recordBusy_.load(std::memory_order_acquire) != 0) std::this_thread::yield();
+  monitorMuted_.store(false);
+  writerQuit_.store(true);
+  writer_.join();
+
+  RecordingResult result;
+  result.frames = recordRead_.load();
+  result.dropped = recordDropped_.load();
+  result.error = writerError_;
+  const uint64_t host = recordStartHost_.load();
+  result.startEpochMs = host ? hostToEpochMs(host) : 0;
+  for (auto& f : recordFiles_) {
+    uint8_t header[kWavHeaderBytes];
+    wavHeader(header, f.ringRight >= 0 ? 2 : 1, info_.sampleRate, result.frames);
+    if (std::fseek(f.file, 0, SEEK_SET) != 0 || std::fwrite(header, 1, sizeof header, f.file) != sizeof header) {
+      if (result.error.empty()) result.error = "Could not finish the recording file";
+    }
+    if (std::fclose(f.file) != 0 && result.error.empty()) result.error = "Could not finish the recording file";
+  }
+  recordFiles_.clear();
+  recordRing_.clear();
+  recordRing_.shrink_to_fit();
+  lastRecording_ = result;
+  return result;
+}
+
+// Input thread: copies the kept channels into the ring. Never blocks: if the
+// writer has fallen behind, the frames are dropped (and counted).
+void Engine::record(const AudioTimeStamp* timestamp, UInt32 frames) {
+  recordBusy_.fetch_add(1, std::memory_order_acq_rel);
+  if (recordOn_.load(std::memory_order_acquire)) {
+    if (recordStartHost_.load(std::memory_order_relaxed) == 0) {
+      const bool valid = timestamp && (timestamp->mFlags & kAudioTimeStampHostTimeValid);
+      recordStartHost_.store(valid ? timestamp->mHostTime : mach_absolute_time(), std::memory_order_relaxed);
+    }
+    const uint64_t written = recordWritten_.load(std::memory_order_relaxed);
+    const uint64_t read = recordRead_.load(std::memory_order_acquire);
+    if (written - read + frames > recordCapacity_) {
+      recordDropped_.fetch_add(frames, std::memory_order_relaxed);
+    } else {
+      const int channels = recordChannelCount_;
+      const uint64_t mask = recordCapacity_ - 1;
+      for (UInt32 f = 0; f < frames; f++) {
+        float* frame = &recordRing_[((written + f) & mask) * channels];
+        for (int c = 0; c < channels; c++) frame[c] = capture_[recordChannels_[c]][f];
+      }
+      recordWritten_.store(written + frames, std::memory_order_release);
+    }
+  }
+  recordBusy_.fetch_sub(1, std::memory_order_acq_rel);
+}
+
+// Writer thread: drains the ring every few ms until told to quit, then once more
+void Engine::writeRecording() {
+  while (!writerQuit_.load()) {
+    if (!drainRecording()) return;
+    std::this_thread::sleep_for(kWriterInterval);
+  }
+  drainRecording();
+}
+
+// Writes everything waiting in the ring to the files. False once writing has failed.
+bool Engine::drainRecording() {
+  if (!writerError_.empty()) return false;
+  const uint64_t read = recordRead_.load(std::memory_order_relaxed);
+  const uint64_t written = recordWritten_.load(std::memory_order_acquire);
+  const uint64_t frames = written - read;
+  if (frames == 0) return true;
+  const int channels = recordChannelCount_;
+  const uint64_t mask = recordCapacity_ - 1;
+  for (const auto& file : recordFiles_) {
+    const int width = file.ringRight >= 0 ? 2 : 1;
+    uint8_t* out = recordScratch_.data();
+    for (uint64_t f = 0; f < frames; f++) {
+      const float* frame = &recordRing_[((read + f) & mask) * channels];
+      putSample(out, frame[file.ringLeft]);
+      out += kRecordBytesPerSample;
+      if (width == 2) {
+        putSample(out, frame[file.ringRight]);
+        out += kRecordBytesPerSample;
+      }
+    }
+    const size_t bytes = static_cast<size_t>(out - recordScratch_.data());
+    if (std::fwrite(recordScratch_.data(), 1, bytes, file.file) != bytes) {
+      writerError_ = "Could not write the recording (is the disk full?)";
+      return false;
+    }
+  }
+  recordRead_.store(written, std::memory_order_release);
+  return true;
+}
+
 OSStatus Engine::outputCallback(void* ref, AudioUnitRenderActionFlags* flags, const AudioTimeStamp* timestamp, UInt32,
                                 UInt32 frames, AudioBufferList* output) {
   return static_cast<Engine*>(ref)->renderOutput(flags, timestamp, frames, output);
@@ -433,7 +642,9 @@ bool Engine::captureInput(AudioUnit unit, AudioUnitRenderActionFlags* flags, con
   if (static_cast<int>(frames) > largestInput_.load(std::memory_order_relaxed)) largestInput_.store(static_cast<int>(frames));
   if (frames > maxFrames_) return false;  // can't happen per MaximumFramesPerSlice
   for (UInt32 c = 0; c < captureList_->mNumberBuffers; c++) captureList_->mBuffers[c].mDataByteSize = frames * sizeof(float);
-  return AudioUnitRender(unit, flags, timestamp, 1, frames, captureList_) == noErr;
+  if (AudioUnitRender(unit, flags, timestamp, 1, frames, captureList_) != noErr) return false;
+  record(timestamp, frames);
+  return true;
 }
 
 void Engine::pushToBridge(UInt32 frames) {
@@ -520,7 +731,7 @@ OSStatus Engine::renderOutput(AudioUnitRenderActionFlags* flags, const AudioTime
   } else {
     const int meters = std::min(static_cast<int>(inputs->size()), kMaxInputMeters);
     for (int c = 0; c < meters; c++) raisePeak(inputPeaks_[c], peakOf((*inputs)[c].data(), frames));
-    mix(*inputs, frames, output);
+    if (!monitorMuted_.load(std::memory_order_relaxed)) mix(*inputs, frames, output);
   }
   frameCounter_ += frames;
   return noErr;

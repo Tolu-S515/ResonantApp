@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { peaksToColumns } from './peaks.js'
+import { bufferPeaks, levelPeaks, peaksToColumns } from './peaks.js'
 
 const peaks = (pairs) => ({ length: pairs.length, data: pairs.flat() })
 
@@ -33,5 +33,29 @@ describe('peaksToColumns', () => {
     const { mins, maxs } = peaksToColumns(peaks([]), 3)
     expect([...mins]).toEqual([0, 0, 0])
     expect([...maxs]).toEqual([0, 0, 0])
+  })
+})
+
+describe('bufferPeaks', () => {
+  const buffer = (...channels) => ({
+    numberOfChannels: channels.length,
+    length: channels[0].length,
+    getChannelData: (c) => Float32Array.from(channels[c]),
+  })
+
+  it('takes each block’s extremes across all channels', () => {
+    const peaks = bufferPeaks(buffer([0.5, -0.25, 0, 1], [0, -1, 0.1, 0]), 2)
+    expect(peaks.length).toBe(2)
+    expect([...peaks.data]).toEqual([-127, 64, 0, 127])
+  })
+
+  it('covers a last, partial block', () => {
+    expect(bufferPeaks(buffer([0, 0, 0.5]), 2).length).toBe(2)
+  })
+})
+
+describe('levelPeaks', () => {
+  it('draws each level both ways from the centre', () => {
+    expect([...levelPeaks([0, 0.5, 2]).data]).toEqual([0, 0, -64, 64, -127, 127])
   })
 })
