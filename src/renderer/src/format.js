@@ -4,12 +4,13 @@ export const STAGE_LABELS = {
   normalizing: 'Converting audio…',
   analyzing: 'Detecting key and tempo…',
   separating: 'Splitting into stems…',
+  chords: 'Finding chords…',
   ready: 'Stems ready',
   cancelled: 'Cancelled',
 }
 
 // Statuses where processing is queued or running, so it can be cancelled
-export const ACTIVE_STATUSES = ['imported', 'normalizing', 'analyzing', 'separating']
+export const ACTIVE_STATUSES = ['imported', 'normalizing', 'analyzing', 'separating', 'chords']
 
 // 83.4 → "1:23"
 export function formatTime(totalSeconds) {

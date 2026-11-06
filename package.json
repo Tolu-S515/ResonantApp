@@ -12,7 +12,8 @@
     "lint": "oxlint",
     "test": "vitest run",
     "test:watch": "vitest",
-    "build:native": "node-gyp rebuild --directory native/audio-engine"
+    "build:native": "node-gyp rebuild --directory native/audio-engine",
+    "build:chordino": "sh native/chordino/build.sh"
   },
   "dependencies": {
     "react": "^19.3.1",

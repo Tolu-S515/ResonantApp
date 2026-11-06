@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-import { CancelledError, createJobQueue, parseMessage, runProcessing } from './processing.js'
+import { CancelledError, createJobQueue, parseMessage, runChordDetection, runProcessing } from './processing.js'
 
 describe('parseMessage', () => {
   it('parses protocol lines', () => {
@@ -97,6 +97,18 @@ describe('runProcessing', () => {
     expect(result.stems.argv).toEqual(['--input', '/in/original.mp3', '--output-dir', '/out'])
   })
 
+  it('passes the chordino path, and reports detected chords', async () => {
+    const script = await fakeScript(
+      'chords.js',
+      `console.log(JSON.stringify({ type: 'chords', chords: [{ time: 0.5, chord: 'A' }] }))
+      console.log(JSON.stringify({ type: 'result', stems: { argv: process.argv.slice(2) } }))`,
+    )
+    const onChords = vi.fn()
+    const result = await run(script, { chordinoPath: '/bin/chordino', onChords })
+    expect(onChords).toHaveBeenCalledWith([{ time: 0.5, chord: 'A' }])
+    expect(result.stems.argv.slice(-2)).toEqual(['--chordino', '/bin/chordino'])
+  })
+
   it('rejects if the script fails after sending its analysis', async () => {
     const script = await fakeScript(
       'late-error.js',
@@ -175,6 +187,37 @@ describe('runProcessing', () => {
     const script = await fakeScript('never.js', `console.log('{"type":"progress","stage":"normalizing"}')`)
     await expect(run(script, { signal: controller.signal, onProgress })).rejects.toBeInstanceOf(CancelledError)
     expect(onProgress).not.toHaveBeenCalled()
+  })
+})
+
+describe('runChordDetection', () => {
+  let dir
+
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'resonant-chords-test-'))
+  })
+
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  const detect = async (source) => {
+    const scriptPath = join(dir, `script-${Math.random()}.js`)
+    await writeFile(scriptPath, source)
+    return runChordDetection({ pythonPath: process.execPath, scriptPath, outputDir: '/out', chordinoPath: '/bin/chordino' })
+  }
+
+  it('runs in chords-only mode and resolves with the chords', async () => {
+    const chords = await detect(
+      `console.log(JSON.stringify({ type: 'chords', chords: [{ time: 0, chord: process.argv.slice(2).join(' ') }] }))`,
+    )
+    expect(chords).toEqual([{ time: 0, chord: '--output-dir /out --chordino /bin/chordino --chords-only' }])
+  })
+
+  it("rejects with the script's error", async () => {
+    await expect(
+      detect(`console.log(JSON.stringify({ type: 'error', message: 'No stems to detect chords from' })); process.exit(1)`),
+    ).rejects.toThrow('No stems to detect chords from')
   })
 })
 

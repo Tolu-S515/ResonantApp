@@ -167,3 +167,4 @@ dist/
 
 # Native engine build output (npm run build:native)
 native/audio-engine/build/
+native/chordino/build/

@@ -9,26 +9,58 @@ import { createInterface } from 'node:readline'
  *   (percent is undefined for stages that don't report it)
  * - onReference({ reference, peaks }) is called once reference.wav and its waveform peaks exist
  * - onAnalysis(analysis) is called as soon as analysis finishes, before separation
+ * - onChords(chords) is called once chords are detected, after separation (only
+ *   with chordinoPath; skipped quietly if detection fails)
  * - signal (AbortSignal) kills the script; the promise then rejects with a CancelledError
  */
-export function runProcessing({
+export async function runProcessing({
   pythonPath,
   scriptPath,
   inputPath,
   outputDir,
+  chordinoPath,
   onProgress,
   onReference,
   onAnalysis,
+  onChords,
   signal,
 }) {
+  let result = null
+  const args = [scriptPath, '--input', inputPath, '--output-dir', outputDir]
+  if (chordinoPath) args.push('--chordino', chordinoPath)
+  await runScript(pythonPath, args, signal, (message) => {
+    if (message.type === 'progress') onProgress?.(message.stage, message.percent)
+    else if (message.type === 'reference') onReference?.({ reference: message.reference, peaks: message.peaks })
+    else if (message.type === 'analysis') onAnalysis?.(message.analysis)
+    else if (message.type === 'chords') onChords?.(message.chords)
+    else if (message.type === 'result') result = { stems: message.stems, peaks: message.peaks ?? {} }
+  })
+  if (!result) throw new Error('Processing exited with code 0 without a result')
+  return result
+}
+
+/**
+ * Detects chords for a session that already has stems (process.py --chords-only)
+ * and resolves with them: [{ time, chord }].
+ */
+export async function runChordDetection({ pythonPath, scriptPath, outputDir, chordinoPath, signal }) {
+  let chords = null
+  const args = [scriptPath, '--output-dir', outputDir, '--chordino', chordinoPath, '--chords-only']
+  await runScript(pythonPath, args, signal, (message) => {
+    if (message.type === 'chords') chords = message.chords
+  })
+  if (!chords) throw new Error('Chord detection finished without a result')
+  return chords
+}
+
+// Spawns the script and passes each protocol message to onMessage. Resolves when it
+// exits cleanly; rejects with its error message (or stderr) otherwise.
+function runScript(pythonPath, args, signal, onMessage) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(new CancelledError())
 
-    const child = spawn(pythonPath, [scriptPath, '--input', inputPath, '--output-dir', outputDir], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
+    const child = spawn(pythonPath, args, { stdio: ['ignore', 'pipe', 'pipe'] })
 
-    let result = null
     let errorMessage = null
     // Keep the tail of stderr for crashes that never reach the script's own error handling
     let stderrTail = ''
@@ -36,11 +68,8 @@ export function runProcessing({
     createInterface({ input: child.stdout }).on('line', (line) => {
       const message = parseMessage(line)
       if (!message) return
-      if (message.type === 'progress') onProgress?.(message.stage, message.percent)
-      else if (message.type === 'reference') onReference?.({ reference: message.reference, peaks: message.peaks })
-      else if (message.type === 'analysis') onAnalysis?.(message.analysis)
-      else if (message.type === 'result') result = { stems: message.stems, peaks: message.peaks ?? {} }
-      else if (message.type === 'error') errorMessage = message.message
+      if (message.type === 'error') errorMessage = message.message
+      else onMessage(message)
     })
 
     child.stderr.on('data', (chunk) => {
@@ -57,7 +86,7 @@ export function runProcessing({
     child.on('close', (code) => {
       signal?.removeEventListener('abort', onAbort)
       if (signal?.aborted) return reject(new CancelledError())
-      if (code === 0 && result) return resolve(result)
+      if (code === 0) return resolve()
       const lastStderrLine = stderrTail.trim().split('\n').pop()
       reject(new Error(errorMessage || lastStderrLine || `Processing exited with code ${code}`))
     })

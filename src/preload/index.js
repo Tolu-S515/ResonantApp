@@ -23,6 +23,8 @@ contextBridge.exposeInMainWorld('resonant', {
   listSessions: () => ipcRenderer.invoke('session:list'),
   // Reads a session's current state from session.json
   getSession: (id) => ipcRenderer.invoke('session:get', id),
+  // Finds chords for a song imported before chord detection; resolves with the updated session
+  detectChords: (id) => ipcRenderer.invoke('session:detect-chords', id),
   // Calls callback(session) whenever a session changes. Returns an unsubscribe function.
   onSessionUpdated: (callback) => {
     const listener = (_event, session) => callback(session)

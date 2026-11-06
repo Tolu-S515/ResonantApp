@@ -15,6 +15,7 @@ import { useInstruments } from '../audio/useInstruments.js'
 import { ACTIVE_STATUSES, STAGE_LABELS, formatGain, formatTime } from '../format.js'
 import { GridLines, RulerBars } from '../components/BeatGrid.jsx'
 import CancelButton from '../components/CancelButton.jsx'
+import ChordDisplay from '../components/ChordDisplay.jsx'
 import Dropdown from '../components/Dropdown.jsx'
 import InstrumentTrack from '../components/InstrumentTrack.jsx'
 import SettingsMenu from '../components/SettingsMenu.jsx'
@@ -115,6 +116,14 @@ function Player() {
       setPosition(0)
     }
   }, [audioKey])
+
+  // Songs imported before chord detection existed: find their chords from the stems
+  // (once per visit; the result arrives through onSessionUpdated)
+  const needsChords = session?.status === 'ready' && !!session.files?.stems && session.chords == null
+  useEffect(() => {
+    if (!sessionId || !needsChords) return
+    window.resonant.detectChords(sessionId).catch((err) => console.warn('Chord detection:', err.message))
+  }, [sessionId, needsChords])
 
   // Stems join the same engine once separation has written them (immediately for a
   // finished session). load() ignores tracks it already has, so re-running is cheap.
@@ -693,6 +702,16 @@ function Player() {
           </div>
         </div>
       </div>
+
+      {session && (
+        <ChordDisplay
+          chords={session.chords}
+          position={position}
+          transpose={playingTranspose}
+          songKey={session.analysis?.key}
+          scale={session.analysis?.scale}
+        />
+      )}
 
       {!sessionId && (
         <p className="player__status">

@@ -1,18 +1,26 @@
 """Session processing: normalize the user's file, analyze it, then split it into stems.
 
 Usage:
-    python process.py --input <original file> --output-dir <session folder> [--skip-separation]
+    python process.py --input <original file> --output-dir <session folder> [--chordino <path>] [--skip-separation]
+    python process.py --output-dir <session folder> --chordino <path> --chords-only
 
 Writes into <output-dir>:
     reference.wav          44.1kHz stereo 16-bit PCM, input to every later step
     stems/<name>.wav       drums, bass, other, vocals, guitar, piano (Demucs htdemucs_6s)
     peaks/<name>.json      waveform overview for reference and each stem (see write_peaks)
 
+Chords are detected from the stems after separation, with the chordino tool
+(native/chordino), and snapped to the beat grid. Without --chordino the step is skipped.
+--chords-only detects them for a session that already has stems (reading its beats
+from session.json) and sends only the chords message.
+
 stdout carries only JSON lines, one message per line, for the Electron main process:
-    {"type": "progress", "stage": "normalizing" | "analyzing" | "separating", "percent"?: 0-100}
+    {"type": "progress", "stage": "normalizing" | "analyzing" | "separating" | "chords", "percent"?: 0-100}
     {"type": "reference", "reference": "reference.wav", "peaks": "peaks/reference.json"}
                                                 sent as soon as the reference is playable
     {"type": "analysis", "analysis": {...}}     sent as soon as analysis finishes
+    {"type": "chords", "chords": [{"time": 0.5, "chord": "A"}, ...]}
+                                                chord changes (seconds; "N" = no chord)
     {"type": "result", "stems": {"drums": "stems/drums.wav", ...}, "peaks": {"drums": "peaks/drums.json", ...}}
     {"type": "error", "message": "..."}
 Anything diagnostic goes to stderr.
@@ -30,6 +38,10 @@ DEMUCS_MODEL = "htdemucs_6s"
 # One min/max pair per 512 samples: ~86 pairs per second, ~20k for a 4-minute song.
 # Enough detail to zoom in a few times before the waveform looks blocky.
 SAMPLES_PER_PEAK = 512
+# Stems that carry the harmony. Drums and vocals only confuse chord detection.
+CHORD_STEMS = ("bass", "guitar", "piano", "other")
+# A chord change this close to a beat moves onto it
+CHORD_SNAP_SEC = 0.25
 
 
 def emit(message):
@@ -213,12 +225,94 @@ def separate(reference_path, output_dir):
     return stems, peaks
 
 
+def harmonic_mix(output_dir):
+    """The chord-carrying stems summed to one mono float32 signal."""
+    import numpy as np
+    import soundfile as sf
+
+    mix = None
+    for name in CHORD_STEMS:
+        path = os.path.join(output_dir, "stems", f"{name}.wav")
+        if not os.path.exists(path):
+            continue
+        audio, _ = sf.read(path, dtype="float32", always_2d=True)
+        mono = audio.mean(axis=1)
+        mix = mono if mix is None else mix + mono
+    if mix is None:
+        raise RuntimeError("No stems to detect chords from")
+    return mix.astype(np.float32)
+
+
+def parse_chordino(text):
+    """chordino's "<seconds>\t<chord>" lines as [(seconds, chord)]."""
+    changes = []
+    for line in text.splitlines():
+        time, sep, chord = line.partition("\t")
+        if sep and chord:
+            changes.append((float(time), chord.strip()))
+    return changes
+
+
+def snap_chords(changes, beats):
+    """Moves each change onto the nearest beat (if within CHORD_SNAP_SEC) and drops
+    changes that no longer change anything. Two changes landing on one beat: the
+    later one wins."""
+    import bisect
+
+    out = []
+    for time, chord in changes:
+        if beats:
+            i = bisect.bisect_left(beats, time)
+            nearest = min(beats[max(0, i - 1) : i + 1], key=lambda b: abs(b - time))
+            if abs(nearest - time) <= CHORD_SNAP_SEC:
+                time = nearest
+        time = round(time, 4)
+        if out and out[-1]["time"] >= time:
+            out[-1]["chord"] = chord
+            if len(out) > 1 and out[-2]["chord"] == chord:
+                out.pop()
+        elif not out or out[-1]["chord"] != chord:
+            out.append({"time": time, "chord": chord})
+    return out
+
+
+def detect_chords(output_dir, beats, chordino):
+    mix = harmonic_mix(output_dir)
+    proc = subprocess.run(
+        [chordino, str(SAMPLE_RATE)], input=mix.tobytes(), capture_output=True, check=False
+    )
+    if proc.returncode != 0:
+        detail = proc.stderr.decode(errors="replace").strip().splitlines()
+        raise RuntimeError(f"Chord detection failed: {detail[-1] if detail else proc.returncode}")
+    return snap_chords(parse_chordino(proc.stdout.decode()), beats)
+
+
+def session_beats(output_dir):
+    with open(os.path.join(output_dir, "session.json")) as f:
+        analysis = json.load(f).get("analysis") or {}
+    return analysis.get("beats") or []
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--input", required=True)
+    parser.add_argument("--input")
     parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--chordino", help="path to the chordino tool; chords are skipped without it")
     parser.add_argument("--skip-separation", action="store_true", help="stop after analysis (for tests)")
+    parser.add_argument("--chords-only", action="store_true", help="detect chords from existing stems")
     args = parser.parse_args()
+
+    if args.chords_only:
+        try:
+            if not args.chordino:
+                raise RuntimeError("--chords-only needs --chordino")
+            emit({"type": "chords", "chords": detect_chords(args.output_dir, session_beats(args.output_dir), args.chordino)})
+        except Exception as err:
+            emit({"type": "error", "message": f"{err}"})
+            sys.exit(1)
+        return
+    if not args.input:
+        parser.error("--input is required")
 
     try:
         emit({"type": "progress", "stage": "normalizing"})
@@ -230,9 +324,18 @@ def main():
         })
 
         emit({"type": "progress", "stage": "analyzing"})
-        emit({"type": "analysis", "analysis": analyze(reference_path)})
+        analysis = analyze(reference_path)
+        emit({"type": "analysis", "analysis": analysis})
 
         stems, peaks = ({}, {}) if args.skip_separation else separate(reference_path, args.output_dir)
+
+        if stems and args.chordino:
+            emit({"type": "progress", "stage": "chords"})
+            try:
+                emit({"type": "chords", "chords": detect_chords(args.output_dir, analysis["beats"], args.chordino)})
+            except Exception as err:  # the song still plays without chords
+                print(f"Chord detection skipped: {err}", file=sys.stderr)
+
         emit({"type": "result", "stems": stems, "peaks": peaks})
     except subprocess.CalledProcessError as err:
         detail = (err.stderr or "").strip().splitlines()

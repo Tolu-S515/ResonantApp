@@ -14,7 +14,12 @@ import unittest
 import numpy as np
 import soundfile as sf
 
+sys.path.insert(0, os.path.dirname(__file__))
+import process  # noqa: E402  (for the pure helpers)
+
 SCRIPT = os.path.join(os.path.dirname(__file__), "process.py")
+# Built by `npm run build:chordino`; the chord tests that need it skip without it
+CHORDINO = os.path.join(os.path.dirname(__file__), "..", "native", "chordino", "build", "chordino")
 SR = 44100
 BPM = 120
 DURATION = 30.0
@@ -222,6 +227,91 @@ class SeparationTest(unittest.TestCase):
 
     def test_leaves_no_temp_folder(self):
         self.assertFalse(os.path.exists(os.path.join(self.out, "stems.tmp")))
+
+
+class ChordHelpersTest(unittest.TestCase):
+    def test_parses_chordino_lines(self):
+        text = "0.1858\tN\n0.2322\tA\n7.1982\tF#m7\n\ngarbage\n"
+        self.assertEqual(process.parse_chordino(text), [(0.1858, "N"), (0.2322, "A"), (7.1982, "F#m7")])
+
+    def test_snaps_changes_to_nearby_beats(self):
+        beats = [0.0, 1.0, 2.0]
+        self.assertEqual(
+            process.snap_chords([(0.1, "A"), (0.93, "D"), (1.5, "E")], beats),
+            [{"time": 0.0, "chord": "A"}, {"time": 1.0, "chord": "D"}, {"time": 1.5, "chord": "E"}],
+        )
+
+    def test_leaves_changes_far_from_any_beat(self):
+        self.assertEqual(process.snap_chords([(3.0, "A")], [0.0, 1.0]), [{"time": 3.0, "chord": "A"}])
+        self.assertEqual(process.snap_chords([(3.0, "A")], []), [{"time": 3.0, "chord": "A"}])
+
+    def test_later_change_wins_a_shared_beat(self):
+        beats = [0.0, 1.0, 2.0]
+        # D and E both snap to 1.0: E wins
+        self.assertEqual(
+            process.snap_chords([(0.0, "A"), (0.9, "D"), (1.1, "E")], beats),
+            [{"time": 0.0, "chord": "A"}, {"time": 1.0, "chord": "E"}],
+        )
+        # A blip that snaps away entirely leaves no repeated chord behind
+        self.assertEqual(
+            process.snap_chords([(0.0, "A"), (0.9, "D"), (1.1, "A"), (2.0, "E")], beats),
+            [{"time": 0.0, "chord": "A"}, {"time": 2.0, "chord": "E"}],
+        )
+
+
+@unittest.skipUnless(os.path.exists(CHORDINO), "chordino not built (npm run build:chordino)")
+class ChordDetectionTest(unittest.TestCase):
+    """Real chordino on the synthesized I-IV-V-I song, written as if it were the stems."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.out = cls.tmp.name
+        os.makedirs(os.path.join(cls.out, "stems"))
+        song = synthesize_song()
+        # The chords go in the "piano" stem; a silent bass stem is summed in too
+        sf.write(os.path.join(cls.out, "stems", "piano.wav"), song, SR, subtype="PCM_16")
+        sf.write(os.path.join(cls.out, "stems", "bass.wav"), np.zeros_like(song), SR, subtype="PCM_16")
+        beats = [round(i * 60 / BPM, 4) for i in range(int(DURATION * BPM / 60))]
+        with open(os.path.join(cls.out, "session.json"), "w") as f:
+            json.dump({"analysis": {"beats": beats}}, f)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def test_finds_the_progression_on_the_beat(self):
+        chords = process.detect_chords(self.out, [round(i * 0.5, 4) for i in range(60)], CHORDINO)
+        names = [c["chord"] for c in chords if c["chord"] != "N"]
+        # Each bar's chord in order (C F G C, repeating); Chordino may add a 6th or 7th
+        roots = [n.rstrip("0123456789").replace("maj", "") for n in names]
+        self.assertEqual(roots[:4], ["C", "F", "G", "C"])
+        bar = 4 * 60 / BPM
+        for c in chords[1:5]:
+            self.assertAlmostEqual(c["time"] / bar, round(c["time"] / bar), delta=0.01, msg=chords)
+
+    def test_chords_only_mode_reads_beats_from_the_session(self):
+        proc = subprocess.run(
+            [sys.executable, SCRIPT, "--output-dir", self.out, "--chordino", CHORDINO, "--chords-only"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        messages = [json.loads(line) for line in proc.stdout.splitlines()]
+        self.assertEqual([m["type"] for m in messages], ["chords"])
+        self.assertIn("F", {c["chord"] for c in messages[0]["chords"]})
+
+    def test_chords_only_reports_missing_stems(self):
+        empty = tempfile.mkdtemp(dir=self.out)
+        with open(os.path.join(empty, "session.json"), "w") as f:
+            json.dump({"analysis": None}, f)
+        proc = subprocess.run(
+            [sys.executable, SCRIPT, "--output-dir", empty, "--chordino", CHORDINO, "--chords-only"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(proc.returncode, 1)
+        self.assertEqual(json.loads(proc.stdout.splitlines()[-1]), {"type": "error", "message": "No stems to detect chords from"})
 
 
 if __name__ == "__main__":

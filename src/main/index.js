@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createAudioController, createAudioHost } from './audio.js'
-import { CancelledError, createJobQueue, runProcessing } from './processing.js'
+import { CancelledError, createJobQueue, runChordDetection, runProcessing } from './processing.js'
 import { handleSessionProtocol, registerSchemePrivileges } from './protocol.js'
 import { RenderCancelledError, createRenderer } from './renders.js'
 import { DEFAULT_INSTRUMENTS, sanitizeDeviceSettings, sanitizeInstruments, sanitizeTrack } from '../shared/audio-settings.js'
@@ -17,6 +17,10 @@ const sessionsDir = () => join(app.getPath('userData'), 'sessions')
 // Dev only: uses the project's Python venv. Packaging will need a bundled interpreter.
 const processingDir = () => join(app.getAppPath(), 'processing')
 const pythonPath = () => join(processingDir(), '.venv', 'bin', 'python')
+
+// Dev only: built by `npm run build:chordino`. Chords are skipped while it's missing.
+const chordinoPath = () => join(app.getAppPath(), 'native', 'chordino', 'build', 'chordino')
+const availableChordino = () => (existsSync(chordinoPath()) ? chordinoPath() : undefined)
 
 // Dev only: built by `npm run build:native`. Packaging will need to ship it unpacked.
 const audioAddonPath = () => join(app.getAppPath(), 'native', 'audio-engine', 'build', 'Release', 'resonant_audio.node')
@@ -115,6 +119,7 @@ async function processSession(webContents, session, signal) {
       scriptPath: join(processingDir(), 'process.py'),
       inputPath: sessionPath(sessionsDir(), id, session.files.original),
       outputDir: sessionPath(sessionsDir(), id),
+      chordinoPath: availableChordino(),
       signal,
       onProgress: (stage, percent) => queueUpdate({ status: stage, progress: percent ?? null }),
       // Saved right away so the reference plays (with its waveform) while analysis and Demucs run
@@ -124,6 +129,7 @@ async function processSession(webContents, session, signal) {
       },
       // Saved right away so key/BPM show while Demucs is still running
       onAnalysis: (analysis) => queueUpdate({ analysis }),
+      onChords: (chords) => queueUpdate({ chords }),
     })
     await writes
     files = { ...files, stems: result.stems, peaks: { ...files.peaks, ...result.peaks } }
@@ -166,6 +172,53 @@ ipcMain.handle('session:cancel', (_event, id) => {
 ipcMain.handle('session:update-details', async (event, id, details) => {
   if (!isSessionId(id)) throw new Error('Invalid session id')
   return updateAndNotify(event.sender, id, sanitizeDetails(details))
+})
+
+// Chords for a song imported before chord detection existed (its stems are reused).
+// Runs in the processing queue; repeated requests share one run. Resolves with the
+// updated session, which every window also gets via 'session:updated'.
+const chordJobs = new Map() // session id → promise
+const needsChords = (session) => session.status === 'ready' && !!session.files.stems && session.chords == null
+
+function findChords(id) {
+  if (!chordJobs.has(id)) {
+    const job = (async () => {
+      const session = await readSession(sessionsDir(), id)
+      if (!needsChords(session)) {
+        if (session.chords != null) return session
+        throw new Error('Chords are found once stem splitting finishes')
+      }
+      const chordino = availableChordino()
+      if (!chordino) throw new Error("Chord detection isn't built. Run: npm run build:chordino")
+      const chords = await enqueue(() =>
+        runChordDetection({
+          pythonPath: pythonPath(),
+          scriptPath: join(processingDir(), 'process.py'),
+          outputDir: sessionPath(sessionsDir(), id),
+          chordinoPath: chordino,
+        }),
+      )
+      const updated = await updateSession(sessionsDir(), id, { chords })
+      sendToWindows('session:updated', updated)
+      return updated
+    })()
+    chordJobs.set(id, job)
+    job.finally(() => chordJobs.delete(id)).catch(() => {})
+  }
+  return chordJobs.get(id)
+}
+
+// At startup: queue every older song that has stems but no chords yet
+async function backfillChords() {
+  if (!availableChordino()) return
+  for (const session of await listSessions(sessionsDir())) {
+    if (needsChords(session)) findChords(session.id).catch((err) => console.warn(`Chords for ${session.id}: ${err.message}`))
+  }
+}
+
+ipcMain.handle('session:detect-chords', (_event, id) => {
+  if (!isSessionId(id)) throw new Error('Invalid session id')
+  return findChords(id)
 })
 
 ipcMain.handle('session:list', () => listSessions(sessionsDir()))
@@ -222,6 +275,8 @@ app.whenReady().then(() => {
   createWindow()
   // Open the chosen audio interface, if there is one
   audio.connect()
+  // Chords for songs imported before chord detection existed
+  backfillChords().catch((err) => console.warn(`Chord backfill: ${err.message}`))
 
   // macOS: re-open a window when the dock icon is clicked and none are open
   app.on('activate', () => {

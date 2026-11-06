@@ -111,6 +111,8 @@ export async function createSession(sessionsDir, sourcePath) {
       speed: 1,
       transpose: 0,
       analysis: null,
+      // Chord changes [{ time, chord }], found after stem splitting
+      chords: null,
     }
     await writeJsonAtomic(join(sessionDir, 'session.json'), session)
     return session
